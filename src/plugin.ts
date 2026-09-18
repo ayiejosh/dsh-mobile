@@ -62,6 +62,7 @@ import {
 import { parseAuthority, parseCidr } from './network.js'
 import {
   availableLanNetworks,
+  isNetworkSelectionError,
   materializeManagedSetup,
   parseManagedSetup,
   preferredLanInterfaceNames,
@@ -485,7 +486,21 @@ export async function apply(ctx: Context, config: PluginConfig): Promise<void> {
         code: 'DSH_MOBILE_NETWORK_REFRESH',
       })
     })
-    await following.initialize(2_000)
+    try {
+      await following.initialize(2_000)
+    } catch (error) {
+      // A missing saved interface (Wi-Fi/Ethernet switch, docked laptop…)
+      // must not take down all of DSH: stay dormant with the poller armed so
+      // a returning network recovers on its own. Anything else is a real
+      // failure and still fails boot loudly.
+      if (!isNetworkSelectionError(error)) throw error
+      const detail = error instanceof Error ? error.message : String(error)
+      process.emitWarning(
+        `DSH Mobile: ${detail}; mobile access stays dormant until the network returns or setup is re-run — DSH itself keeps running.`,
+        { code: 'DSH_MOBILE_NETWORK_UNAVAILABLE' },
+      )
+      following.beginPolling(2_000)
+    }
     return following
   }
   const lanControlFile = parseControlFile(config.controlFile)

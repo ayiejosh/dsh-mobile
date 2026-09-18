@@ -275,6 +275,14 @@ flowchart LR
 
 完整说明见 [SECURITY.md](SECURITY.md)。
 
+## 故障排查
+
+- **启动报 `saved LAN interface "XXX" is not connected` 且 DSH 起不来**：
+  电脑切换过网络（WiFi/有线/扩展坞），之前保存的网卡当前未连接。处理方式
+  （三选一）：连回原来的网络；按新网络重跑一遍 setup；暂时不用手机访问时，
+  在 `cordis.patch.yml` 把 `mobile-access` 设 `disabled: true`。新版本中该
+  情况不再阻断启动——插件记一条警告后休眠，等网卡回来自动恢复。
+
 ## 兼容性
 
 下表列出各插件版本验证支持到的 DeepSeek Harness 版本（早于该版本的 0.1.x 均兼容）。0.3.6 起插件不再按版本号拒绝启动，未列出的更新版本由 CI 契约检查兜底。历史记录见 [CHANGELOG.md](CHANGELOG.md)。

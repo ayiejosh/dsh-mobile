@@ -199,6 +199,21 @@ export function selectLanNetwork(
   throw new Error(`more than one LAN address is active; rerun with --address and one of: ${candidates.map(entry => `${entry.name}=${entry.address}`).join(', ')}`)
 }
 
+/**
+ * True when the failure came from LAN selection (the configured network is
+ * gone, nothing is up, or several are) rather than from config/TLS code.
+ * Callers use it to degrade (warn + stay down) instead of failing boot.
+ * Pinned to the selectLanNetwork message contract — keep in sync.
+ */
+export function isNetworkSelectionError(error: unknown): boolean {
+  const message = error instanceof Error ? error.message : String(error ?? '')
+  return message.includes('is not connected')
+    || message.includes('no active private LAN address was found')
+    || message.includes('more than one LAN address is active')
+    || message.includes('has more than one private IPv4 address')
+    || message.includes('is not an active private LAN address')
+}
+
 function assertMatchingCa(certPem: string, keyPem: string): X509Certificate {
   const certificate = new X509Certificate(certPem)
   if (!certificate.ca || certificate.subject !== certificate.issuer
