@@ -291,12 +291,12 @@ The table below lists, for each plugin version, the DeepSeek Harness version it 
 
 | Channel | Windows x64 | Linux x64 | Linux arm64 | macOS |
 | --- | --- | --- | --- | --- |
-| Local network | ✅ (firewall automated) | ✅ (open the firewall yourself) | ✅ | ✅ |
-| Tailscale Funnel | ✅ (bundled) | ✅ (bundled) | ✅ (bundled) | ❌ |
-| cpolar | ✅ (on-demand) | ✅ (on-demand) | ✅ (on-demand) | ❌ |
-| cloudflared quick/named tunnel | ✅ (on-demand) | ✅ (on-demand) | ✅ (on-demand) | ❌ |
-| Self-hosted FRP | ✅ (on-demand) | ✅ (on-demand) | ✅ (on-demand) | ✅ (on-demand) |
-| Own reverse proxy | ✅ (config only) | ✅ (config only) | ✅ (config only) | ✅ (config only) |
+| Local network | Yes (firewall automated) | Yes (open the firewall yourself) | Yes | Yes |
+| Tailscale Funnel | Yes (bundled) | Yes (bundled) | Yes (bundled) | No |
+| cpolar | Yes (on-demand) | Yes (on-demand) | Yes (on-demand) | No |
+| cloudflared quick/named tunnel | Yes (on-demand) | Yes (on-demand) | Yes (on-demand) | No |
+| Self-hosted FRP | Yes (on-demand) | Yes (on-demand) | Yes (on-demand) | Yes (on-demand) |
+| Own reverse proxy | Yes (config only) | Yes (config only) | Yes (config only) | Yes (config only) |
 
 On macOS, local network, self-hosted FRP, and the own reverse proxy work; the three managed components have no macOS build yet. The diagnostics firewall check currently covers Windows only and reports “not applicable” elsewhere.
 
