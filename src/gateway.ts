@@ -112,8 +112,8 @@ const MAX_MOBILE_BOOT_ENTRY_BYTES = 8 * 1024 * 1024
  * below {@link MAX_MOBILE_BOOT_BATCH_BYTES} so assembly can never reject it.
  */
 const MOBILE_BOOT_CHUNK_BYTES = 16 * 1024 * 1024
-/** Bytes the assembly emits between entries (`body` plus `\n;\n`). */
-const MOBILE_BOOT_SEPARATOR_BYTES = 2
+/** Bytes the assembly emits after each entry (`body` plus `\n;\n`). */
+const MOBILE_BOOT_SEPARATOR_BYTES = 3
 /** Freshness window for cached upstream bundle byte sizes. */
 const MOBILE_BOOT_SIZE_CACHE_TTL_MS = 30_000
 /** Marker header distinguishing size probes from ordinary proxied bundle fetches. */
@@ -1961,12 +1961,6 @@ export class MobileAccessGateway {
   }
 
   /**
-   * Read one upstream bundle's byte size with a header-only GET probe (the
-   * upstream serves `/plugins` bundles without a Content-Length on HEAD), cached
-   * for a short window. The response is destroyed at the headers so the probe
-   * never transfers the bundle body.
-   */
-  /**
    * Measure one upstream bundle by reading its body. The upstream serves
    * `/plugins` bundles as chunked streams without a Content-Length, so a probe
    * counts bytes; it aborts instantly past the per-entry cap. Measurements are
@@ -2120,7 +2114,7 @@ export class MobileAccessGateway {
     // connections when this many entries are pulled at once, and every reset
     // used to fail the whole batch.
     await Promise.all(Array.from({ length: Math.min(3, plan.entries.length) }, worker))
-    const total = bodies.reduce((bytes, body) => bytes + body.byteLength + 2, 0)
+    const total = bodies.reduce((bytes, body) => bytes + body.byteLength + MOBILE_BOOT_SEPARATOR_BYTES, 0)
     if (total > MAX_MOBILE_BOOT_BATCH_BYTES) throw new HttpError(502, 'upstream_unavailable')
     return Buffer.concat(bodies.flatMap(body => [body, Buffer.from('\n;\n')]))
   }
