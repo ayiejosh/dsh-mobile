@@ -30,9 +30,9 @@
 
 > DSH Mobile is a DeepSeek Harness community plugin; the native app supports Android only.
 >
-> **0.4.2 update**: adds an own HTTPS reverse proxy and the cloudflared remote channel (quick and named tunnels) with on-demand component installation, plus one-command frps + Caddy deployment. The provider chooser and panel copy were re-measured at its real 380 px width, and the on-demand download no longer dies on a redirect or hides its failure message. [Details](CHANGELOG.md).
+> **0.4.3 update**: the Funnel, cpolar and cloudflared remote channels now support Linux (x64/arm64); a disconnected saved LAN interface no longer blocks the whole DSH boot (it stays dormant until the network returns); and heavy profiles no longer white-screen phones (boot-batch chunking plus large-bundle pass-through). [Details](CHANGELOG.md).
 >
-> **Upgrade reminder**: the 0.4.2 plugin continues to work with the 0.4.0 Android app and existing devices do not need re-pairing; a named tunnel must be scanned from inside the app's Remote flow. Install the 0.4.2 app as well if you want this Android build. [Compatibility notes](#compatibility).
+> **Upgrade reminder**: the 0.4.3 plugin continues to work with existing Android apps and paired devices do not need re-pairing. Install the 0.4.3 app as well if you want this Android build. [Compatibility notes](#compatibility).
 
 <p align="center">
   <a href="https://github.com/saya-ch/dsh-mobile/releases/latest"><img src="assets/brand/app-icon-rounded.svg" alt="DSH Mobile Android app icon" width="72" height="72"></a><br>
@@ -215,7 +215,7 @@ Compatibility and WebSocket rules:
 
 Proxied pages allow HTTP frames for compatibility with some community plugins; those pages are unencrypted and can be altered, and browsers may still block them as mixed content. Use HTTPS for sensitive work. The same warning appears at the top of the remote panel when it is opened over HTTPS.
 
-- The released 0.4.0 is contract-checked against DSH `0.1.5-rc.2` (renderer-v2) and retains the `0.1.5-rc.1` LAN verification. The DSH page must expose the standard session, `main`/`panelInfo`, and `rightbar` slots; the community plugin must register its panel or sidebar content through DSH's standard entry points.
+- The released 0.4.3 is contract-checked against DSH `0.1.6-alpha.2` (renderer-v2). The DSH page must expose the standard session, `main`/`panelInfo`, and `rightbar` slots; the community plugin must register its panel or sidebar content through DSH's standard entry points.
 - The gateway allows first-party DSH WebSocket paths by default, including `/sidebar/ws/terminal`. Other paths used by community sidebar plugins are blocked by default and appear in Diagnostics; the `/sidebar/ws/agent-opens` and `/sidebar/ws/agent-terminals` paths in the image are examples that must be reviewed for the actual plugin.
 - In **Connection diagnostics → Third-party WebSocket paths**, select **Allow** only for an exact path you have verified. Query strings and fuzzy prefixes are rejected; **Allow all** is not recommended. Approved paths can be removed at any time, and the same policy applies to LAN and remote connections.
 - Approval only lets that path pass through the authenticated, same-origin DSH Mobile gateway. It does not open arbitrary TCP/UDP ports or bypass device pairing. If a community plugin still fails, check the path recorded by Diagnostics and approve one path at a time.
@@ -313,7 +313,7 @@ On macOS, local network, self-hosted FRP, and the own reverse proxy work; the th
 | `0.3.0`-`0.3.3` | `0.1.2-alpha.1` |
 | `0.1.4`, `0.2.x` | `0.1.1-rc.2` |
 
-Existing 0.3.3–0.4.0 apps do not need re-pairing. cpolar users should use app 0.3.15 or later because earlier apps may time out before a slow first load over the free route finishes; earlier apps also use a different status-bar strategy. The 0.4.0 app adds the multi-device list, startup behavior, and computer-side revocation status; older apps continue to connect to their saved single device. App 0.1.3 or earlier requires reinstalling and pairing again.
+Existing apps (0.3.3 and later) do not need re-pairing. cpolar users should use app 0.3.15 or later because earlier apps may time out before a slow first load over the free route finishes; earlier apps also use a different status-bar strategy. The 0.4.0 app adds the multi-device list, startup behavior, and computer-side revocation status; older apps continue to connect to their saved single device. App 0.1.3 or earlier requires reinstalling and pairing again.
 
 ## Uninstall
 
