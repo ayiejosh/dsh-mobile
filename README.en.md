@@ -302,6 +302,7 @@ On macOS, local network, self-hosted FRP, and the own reverse proxy work; the th
 
 | DSH Mobile plugin | Verified DeepSeek Harness version |
 | --- | --- |
+| `0.4.3` | `0.1.6-alpha.2` (local source and renderer-v2 contract check) |
 | `0.4.2` | `0.1.6-alpha.1` (local source and renderer-v2 contract check) |
 | `0.4.1` | `0.1.6-alpha.1` (local source and renderer-v2 contract check) |
 | `0.3.15`, `0.3.16`, `0.4.0` | `0.1.5-rc.2` (contract check); `0.1.5-rc.1` (@idoall LAN verification) |
