@@ -228,4 +228,33 @@ describe('FollowingMobileAccessRuntime', () => {
 
     expect(events).toEqual(['start:old', 'stop:old', 'start:new', 'start:new', 'stop:new'])
   })
+
+  it('recovers through beginPolling when the first selection is down', async () => {
+    const events: string[] = []
+    let networkUp = false
+    const errors: unknown[] = []
+    const following = new FollowingMobileAccessRuntime(async () => {
+      if (!networkUp) throw new Error('saved LAN interface "WLAN 3" is not connected')
+      return {
+        key: 'up',
+        start: async () => {
+          events.push('start:up')
+          return runtime(() => { events.push('stop:up') })
+        },
+      }
+    }, error => { errors.push(error) })
+
+    // Boot path: initial selection fails, poller stays armed instead of throwing.
+    following.beginPolling(10)
+    await new Promise(resolve => setTimeout(resolve, 50))
+    expect(events).toEqual([])
+    expect(errors.length).toBeGreaterThan(0)
+
+    // The saved interface returns: the next poll starts the gateway on its own.
+    networkUp = true
+    await new Promise(resolve => setTimeout(resolve, 50))
+    expect(events).toEqual(['start:up'])
+    await following.close()
+    expect(events).toEqual(['start:up', 'stop:up'])
+  })
 })

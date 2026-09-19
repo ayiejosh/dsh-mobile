@@ -2,6 +2,10 @@
 
 Notable changes to DSH Mobile are recorded here. GitHub Releases remain the source for downloadable packages and complete generated commit notes.
 
+## Unreleased
+
+- A saved LAN interface that is not connected (e.g. after switching from Wi-Fi to Ethernet) no longer fails the whole DSH boot: mobile access logs a warning, stays dormant with its refresh poller armed, and recovers on its own when the adapter returns. Genuine config/TLS errors still fail loudly.
+
 ## 0.4.2 - 2026-09-16
 
 - Add an Own reverse proxy provider under Remote → Self-hosted for an existing user-managed HTTPS proxy. It provides a separate authenticated private HTTP origin (default 3444), strict private bind/source-CIDR validation, custom public HTTPS ports, local configuration and safe settings-only purge (thanks @xingleiwu for PR #84).

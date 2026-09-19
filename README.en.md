@@ -273,6 +273,16 @@ Three layers: the Host face for discovery, pairing, HTTPS, loopback proxying, an
 
 See [SECURITY.md](SECURITY.md).
 
+## Troubleshooting
+
+- **Boot fails with `saved LAN interface "XXX" is not connected`**: the
+  computer switched networks (Wi-Fi/Ethernet/dock) and the previously saved
+  adapter is down. Either reconnect that network, re-run setup on the new
+  one, or set `mobile-access` to `disabled: true` in `cordis.patch.yml` if
+  phone access is not needed. Recent versions no longer block boot in this
+  case — the plugin logs a warning, stays dormant, and recovers when the
+  adapter returns.
+
 ## Compatibility
 
 The table below lists, for each plugin version, the DeepSeek Harness version it is verified to support (earlier 0.1.x releases are compatible as well). Starting with 0.3.6 the plugin no longer rejects a DSH version by number alone; newer unlisted versions are covered by CI's contract checks. History lives in [CHANGELOG.md](CHANGELOG.md).

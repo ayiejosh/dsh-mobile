@@ -43,6 +43,18 @@ export class FollowingMobileAccessRuntime implements MobileAccessRuntime {
   async initialize(refreshIntervalMs?: number): Promise<void> {
     await this.refresh()
     if (refreshIntervalMs === undefined) return
+    this.beginPolling(refreshIntervalMs)
+  }
+
+  /**
+   * Arm the refresh poller without requiring an initial selection.
+   * Boot-degraded path: the first selection already failed (e.g. the saved
+   * LAN is down), but later refreshes must still get their chance so a
+   * returning network recovers without a restart. Failures keep flowing to
+   * onRefreshError; close() stays the single teardown.
+   */
+  beginPolling(refreshIntervalMs: number): void {
+    if (this.timer !== undefined) return
     this.timer = setInterval(() => {
       void this.refresh().catch(this.onRefreshError)
     }, refreshIntervalMs)

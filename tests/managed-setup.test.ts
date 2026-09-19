@@ -5,6 +5,7 @@ import { join } from 'node:path'
 import { describe, expect, it } from 'vitest'
 import {
   ensureManagedCa,
+  isNetworkSelectionError,
   materializeManagedSetup,
   parseManagedSetup,
   preferredLanInterfaceNames,
@@ -60,6 +61,28 @@ describe('managed DHCP setup', () => {
       address: '192.168.50.23',
       cidr: '192.168.50.0/24',
     })
+  })
+
+  it('flags LAN-selection failures as degradable, config failures as fatal', () => {
+    const table = interfaceTable('192.168.50.23')
+    const selectionErrors = [
+      () => selectLanNetwork(undefined, 'Ethernet', table),
+      () => selectLanNetwork(undefined, undefined, {}),
+      () => selectLanNetwork('10.9.9.9', undefined, table),
+      () => selectLanNetwork(undefined, 'WLAN', {
+        WLAN: [interfaceEntry('192.168.50.23'), interfaceEntry('192.168.50.24')],
+      }),
+    ]
+    for (const run of selectionErrors) {
+      let error: unknown
+      try { run() } catch (e) { error = e }
+      expect(error).toBeInstanceOf(Error)
+      expect(isNetworkSelectionError(error)).toBe(true)
+    }
+    expect(isNetworkSelectionError(new Error('managed TLS CA certificate and key do not match'))).toBe(false)
+    expect(isNetworkSelectionError(new Error('mobile setup networkInterface'))).toBe(false)
+    expect(isNetworkSelectionError(undefined)).toBe(false)
+    expect(isNetworkSelectionError('plain string')).toBe(false)
   })
 
   it('uses the physical default route instead of active virtual networks', async () => {
