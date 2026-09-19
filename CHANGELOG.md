@@ -2,9 +2,13 @@
 
 Notable changes to DSH Mobile are recorded here. GitHub Releases remain the source for downloadable packages and complete generated commit notes.
 
-## Unreleased
+## 0.4.3 - 2026-09-19
 
-- A saved LAN interface that is not connected (e.g. after switching from Wi-Fi to Ethernet) no longer fails the whole DSH boot: mobile access logs a warning, stays dormant with its refresh poller armed, and recovers on its own when the adapter returns. Genuine config/TLS errors still fail loudly.
+- Support Linux for the Funnel, cpolar and cloudflared remote providers, including x64 and arm64 Funnel host binaries.
+- Stay compatible with DSH 0.1.6-alpha.2 (plan-review without scroll marker).
+- Split oversized mobile boot batches so profiles with heavy client bundles (e.g. a 21 MB office viewer) boot on phones again: the layout batch is chunked under a 16 MiB budget, single bundles at or above the per-entry cap pass through on their own `/plugins` row, and pass-through fetches get the same bounded transient retry the merged assembly already has (thanks @abworks-dev for PR #91).
+- A saved LAN interface that is not connected (e.g. after switching from Wi-Fi to Ethernet) no longer fails the whole DSH boot: mobile access logs a warning, stays dormant with its refresh poller armed, and recovers on its own when the adapter returns. Genuine config/TLS errors still fail loudly (thanks @1624318455 for PR #93).
+- Correct the merged boot-batch separator accounting and mark the Linux Funnel binaries executable so the license/binary check passes in CI.
 
 ## 0.4.2 - 2026-09-16
 
