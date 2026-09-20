@@ -457,6 +457,7 @@ export async function apply(ctx: Context, config: PluginConfig): Promise<void> {
       upstreamLoginUrl,
       webSocketPaths,
       blockedUpgradePaths,
+      (source, code) => { logger.warn('%s discovery degraded while DSH remains available: %s', source, code) },
     )
     await candidate.start()
     lanGateway = candidate

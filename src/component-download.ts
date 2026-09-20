@@ -66,14 +66,25 @@ async function attemptDownload(request: PinnedDownloadRequest): Promise<Uint8Arr
   const redirected = first.status >= 300 && first.status < 400
   const response = redirected ? await followValidatedRedirect(first, request) : first
   if (!response.ok) throw new Error(`${request.errorPrefix}_download_http_${String(response.status)}`)
-  const declared = Number(response.headers.get('content-length'))
-  if (Number.isFinite(declared) && declared !== request.expectedBytes) {
+  const contentLength = response.headers.get('content-length')
+  if (contentLength !== null && (!/^\d+$/u.test(contentLength) || Number(contentLength) !== request.expectedBytes)) {
     throw new Error(`${request.errorPrefix}_download_size_mismatch`)
   }
-  const bytes = new Uint8Array(await response.arrayBuffer())
-  if (bytes.byteLength !== request.expectedBytes) {
-    throw new Error(`${request.errorPrefix}_download_size_mismatch`)
+  if (response.body === null) throw new Error(`${request.errorPrefix}_download_size_mismatch`)
+  const bytes = new Uint8Array(request.expectedBytes)
+  const reader = response.body.getReader()
+  let received = 0
+  while (true) {
+    const chunk = await reader.read()
+    if (chunk.done) break
+    if (chunk.value.byteLength > bytes.byteLength - received) {
+      await reader.cancel()
+      throw new Error(`${request.errorPrefix}_download_size_mismatch`)
+    }
+    bytes.set(chunk.value, received)
+    received += chunk.value.byteLength
   }
+  if (received !== request.expectedBytes) throw new Error(`${request.errorPrefix}_download_size_mismatch`)
   return bytes
 }
 

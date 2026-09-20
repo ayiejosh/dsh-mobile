@@ -808,6 +808,13 @@ function discoveryBroadcastTargets(cidrs: readonly ParsedCidr[]): readonly strin
   return [...targets]
 }
 
+function discoveryFailure(error: unknown): { readonly code: string; readonly message: string } {
+  const code = error instanceof Error && typeof (error as NodeJS.ErrnoException).code === 'string'
+    ? (error as NodeJS.ErrnoException).code!
+    : 'unknown'
+  return Object.freeze({ code, message: error instanceof Error ? error.message : String(error) })
+}
+
 function extensionTarget(pathname: string):
   | { readonly kind: 'manifest' }
   | { readonly kind: 'events' }
@@ -907,6 +914,7 @@ export class MobileAccessGateway {
    * it, "the phone cannot find this computer" has no diagnosable cause on the host.
    */
   private discoveryError: { readonly code: string; readonly message: string } | undefined
+  private mdnsError: { readonly code: string; readonly message: string } | undefined
   /** Names of the bundled mobile assets that could not be read, if any. */
   private mobileAssetError: string | undefined
   private bonjour: Bonjour | undefined
@@ -946,6 +954,7 @@ export class MobileAccessGateway {
     private readonly upstreamAuthenticatedUrl?: string,
     private readonly extraWebSocketPaths?: { has(pathname: string): boolean },
     private readonly blockedUpgradeLog?: BlockedUpgradePathLog,
+    private readonly onDiscoveryDegraded?: (source: 'broadcast' | 'mdns', code: string) => void,
   ) {
     this.listenerTlsEnabled = config.tls.mode === 'provided'
     this.tlsEnabled = config.publicTls
@@ -1083,10 +1092,24 @@ export class MobileAccessGateway {
     const socket = createSocket('udp4')
     this.discoverySocket = socket
     const announcement = this.discoveryAnnouncement(port)
+    let binding = true
+    socket.on('error', error => {
+      if (!binding) this.recordBroadcastFailure(error, true)
+    })
+    const sendAnnouncement = (targetPort: number, address: string): void => {
+      if (this.closing || this.discoveryError !== undefined) return
+      try {
+        socket.send(announcement, targetPort, address, error => {
+          if (error !== null) this.recordBroadcastFailure(error, true)
+        })
+      } catch (error) {
+        this.recordBroadcastFailure(error, true)
+      }
+    }
     socket.on('message', (message, remote) => {
-      if (this.closing || !message.equals(DISCOVERY_QUERY)
+      if (this.closing || this.discoveryError !== undefined || !message.equals(DISCOVERY_QUERY)
         || !addressAllowed(remote.address, this.config.allowedCidrs)) return
-      socket.send(announcement, remote.port, remote.address, () => undefined)
+      sendAnnouncement(remote.port, remote.address)
     })
     // The UDP socket is IPv4-only; only a literal IPv4 loopback address is bindable, never ::1.
     const bindHost = isIP(this.config.listenHost) === 4 && isLoopbackAddress(this.config.listenHost) ? this.config.listenHost : '0.0.0.0'
@@ -1097,28 +1120,37 @@ export class MobileAccessGateway {
     const bound = await new Promise<boolean>(resolve => {
       const onBindError = (error: NodeJS.ErrnoException): void => {
         socket.off('error', onBindError)
-        this.discoveryError = Object.freeze({
-          code: typeof error.code === 'string' ? error.code : 'unknown',
-          message: typeof error.message === 'string' ? error.message : String(error),
-        })
+        this.recordBroadcastFailure(error, false)
         resolve(false)
       }
       socket.once('error', onBindError)
-      socket.bind(port, bindHost, () => {
-        socket.off('error', onBindError)
-        socket.setBroadcast(true)
-        resolve(true)
-      })
+      try {
+        socket.bind(port, bindHost, () => {
+          socket.off('error', onBindError)
+          binding = false
+          try {
+            socket.setBroadcast(true)
+            resolve(true)
+          } catch (error) {
+            this.recordBroadcastFailure(error, true)
+            resolve(false)
+          }
+        })
+      } catch (error) {
+        onBindError(error as NodeJS.ErrnoException)
+      }
     })
-    if (bound) {
+    if (bound && this.discoveryError === undefined) {
       const announce = (): void => {
         for (const target of discoveryBroadcastTargets(this.config.allowedCidrs)) {
-          socket.send(announcement, port, target, () => undefined)
+          sendAnnouncement(port, target)
         }
       }
       announce()
-      this.discoveryTimer = setInterval(announce, DISCOVERY_INTERVAL_MS)
-      this.discoveryTimer.unref()
+      if (this.discoveryError === undefined) {
+        this.discoveryTimer = setInterval(announce, DISCOVERY_INTERVAL_MS)
+        this.discoveryTimer.unref()
+      }
     } else {
       this.discoverySocket = undefined
       // A socket whose bind failed was never running, so close() throws synchronously.
@@ -1126,8 +1158,13 @@ export class MobileAccessGateway {
     }
 
     const deviceName = discoveryDeviceName()
-    const bonjour = new Bonjour({ disableIPv6: true })
+    const onMdnsError = (error: unknown): void => { this.recordMdnsFailure(error) }
+    const bonjour = new Bonjour({ disableIPv6: true }, onMdnsError)
     this.bonjour = bonjour
+    // bonjour-service 1.4.4 does not forward multicast-dns EventEmitter errors
+    // through errorCallback. Keep a listener on its underlying emitter for its lifetime.
+    const mdns = (bonjour as unknown as { server: { mdns: { on(event: 'error', listener: (error: Error) => void): void } } }).server.mdns
+    mdns.on('error', onMdnsError)
     bonjour.publish({
       name: `${deviceName} (${this.config.instanceId.slice(0, 8)})`,
       type: MDNS_SERVICE_TYPE,
@@ -1142,6 +1179,30 @@ export class MobileAccessGateway {
         protocol: String(DISCOVERY_PROTOCOL),
       },
     })
+  }
+
+  private reportDiscoveryDegraded(source: 'broadcast' | 'mdns', code: string): void {
+    try {
+      this.onDiscoveryDegraded?.(source, code)
+    } catch (error) {
+      process.emitWarning(`DSH Mobile could not log ${source} discovery error: ${String(error)}`, {
+        code: 'DSH_MOBILE_DISCOVERY_LOG_FAILED',
+      })
+    }
+  }
+
+  private recordBroadcastFailure(error: unknown, notify: boolean): void {
+    if (this.closing || this.discoveryError !== undefined) return
+    this.discoveryError = discoveryFailure(error)
+    if (this.discoveryTimer !== undefined) clearInterval(this.discoveryTimer)
+    this.discoveryTimer = undefined
+    if (notify) this.reportDiscoveryDegraded('broadcast', this.discoveryError.code)
+  }
+
+  private recordMdnsFailure(error: unknown): void {
+    if (this.closing || this.mdnsError !== undefined) return
+    this.mdnsError = discoveryFailure(error)
+    this.reportDiscoveryDegraded('mdns', this.mdnsError.code)
   }
 
   private discoveryAnnouncement(port: number): Buffer {
@@ -1200,12 +1261,14 @@ export class MobileAccessGateway {
     readonly broadcast: boolean
     readonly mdns: boolean
     readonly errorCode?: string
+    readonly mdnsErrorCode?: string
     readonly mobileAssetsErrorCode?: string
   } {
     return Object.freeze({
       broadcast: this.discoverySocket !== undefined && this.discoveryTimer !== undefined,
-      mdns: this.bonjour !== undefined,
+      mdns: this.bonjour !== undefined && this.mdnsError === undefined,
       ...(this.discoveryError === undefined ? {} : { errorCode: `discovery_broadcast_${this.discoveryError.code}` }),
+      ...(this.mdnsError === undefined ? {} : { mdnsErrorCode: `discovery_mdns_${this.mdnsError.code}` }),
       // A bundled asset that is missing would otherwise only show up as a 503 on a
       // subresource the served page still references.
       ...(this.mobileAssetError === undefined ? {} : { mobileAssetsErrorCode: this.mobileAssetError }),

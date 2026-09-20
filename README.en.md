@@ -24,20 +24,21 @@
   <a href="#third-party-plugin-compatibility">Third-party plugins</a> ·
   <a href="#security">Security</a> ·
   <a href="#compatibility">Compatibility</a> ·
+  <a href="#contributors">Contributors</a> ·
   <a href="CHANGELOG.md">Changelog</a> ·
   <a href="README.md">简体中文</a>
 </p>
 
 > DSH Mobile is a DeepSeek Harness community plugin; the native app supports Android only.
 >
-> **0.4.3 update**: the Funnel, cpolar and cloudflared remote channels now support Linux (x64/arm64); a disconnected saved LAN interface no longer blocks the whole DSH boot (it stays dormant until the network returns); and heavy profiles no longer white-screen phones (boot-batch chunking plus large-bundle pass-through). [Details](CHANGELOG.md).
+> **0.4.4 update**: runtime mDNS or UDP discovery errors no longer take down DSH, and component downloads accept proxy responses without `Content-Length`. [Details](CHANGELOG.md).
 >
-> **Upgrade reminder**: the 0.4.3 plugin continues to work with existing Android apps and paired devices do not need re-pairing. Install the 0.4.3 app as well if you want this Android build. [Compatibility notes](#compatibility).
+> **Upgrade reminder**: the 0.4.4 plugin continues to work with existing Android apps and paired devices do not need re-pairing. Install the 0.4.4 app if you want this Android build. [Compatibility notes](#compatibility).
 
 <p align="center">
-  <a href="https://github.com/saya-ch/dsh-mobile/releases/download/v0.4.3/dsh-mobile-android-v0.4.3.apk"><img src="assets/brand/app-icon-rounded.svg" alt="DSH Mobile Android app icon" width="72" height="72"></a><br>
-  <a href="https://github.com/saya-ch/dsh-mobile/releases/download/v0.4.3/dsh-mobile-android-v0.4.3.apk"><strong>Download Android app 0.4.3</strong></a><br>
-  <sub><a href="https://github.com/saya-ch/dsh-mobile/releases/tag/v0.4.3">Release notes and checksums</a></sub>
+  <a href="https://github.com/saya-ch/dsh-mobile/releases/download/v0.4.4/dsh-mobile-android-v0.4.4.apk"><img src="assets/brand/app-icon-rounded.svg" alt="DSH Mobile Android app icon" width="72" height="72"></a><br>
+  <a href="https://github.com/saya-ch/dsh-mobile/releases/download/v0.4.4/dsh-mobile-android-v0.4.4.apk"><strong>Download Android app 0.4.4</strong></a><br>
+  <sub><a href="https://github.com/saya-ch/dsh-mobile/releases/tag/v0.4.4">Release notes and checksums</a></sub>
 </p>
 
 DSH Mobile is a DeepSeek Harness plugin that lets a mobile browser or the Android app connect over a protected LAN or an optional Tailscale Funnel, cpolar, cloudflared, self-hosted FRP, or own reverse-proxy remote path. Local and remote access keep the same sessions, Workspaces, messages, and tools while using separate switches and paired-device stores without modifying DeepSeek Harness source.
@@ -215,7 +216,7 @@ Compatibility and WebSocket rules:
 
 Proxied pages allow HTTP frames for compatibility with some community plugins; those pages are unencrypted and can be altered, and browsers may still block them as mixed content. Use HTTPS for sensitive work. The same warning appears at the top of the remote panel when it is opened over HTTPS.
 
-- The released 0.4.3 is contract-checked against DSH `0.1.6-alpha.2` (renderer-v2). The DSH page must expose the standard session, `main`/`panelInfo`, and `rightbar` slots; the community plugin must register its panel or sidebar content through DSH's standard entry points.
+- Version 0.4.4 is contract-checked against DSH `0.1.6-alpha.2` (renderer-v2). The DSH page must expose the standard session, `main`/`panelInfo`, and `rightbar` slots; the community plugin must register its panel or sidebar content through DSH's standard entry points.
 - The gateway allows first-party DSH WebSocket paths by default, including `/sidebar/ws/terminal`. Other paths used by community sidebar plugins are blocked by default and appear in Diagnostics; the `/sidebar/ws/agent-opens` and `/sidebar/ws/agent-terminals` paths in the image are examples that must be reviewed for the actual plugin.
 - In **Connection diagnostics → Third-party WebSocket paths**, select **Allow** only for an exact path you have verified. Query strings and fuzzy prefixes are rejected; **Allow all** is not recommended. Approved paths can be removed at any time, and the same policy applies to LAN and remote connections.
 - Approval only lets that path pass through the authenticated, same-origin DSH Mobile gateway. It does not open arbitrary TCP/UDP ports or bypass device pairing. If a community plugin still fails, check the path recorded by Diagnostics and approve one path at a time.
@@ -302,6 +303,7 @@ On macOS, local network, self-hosted FRP, and the own reverse proxy work; the th
 
 | DSH Mobile plugin | Verified DeepSeek Harness version |
 | --- | --- |
+| `0.4.4` | `0.1.6-alpha.2` (local source and renderer-v2 contract check) |
 | `0.4.3` | `0.1.6-alpha.2` (local source and renderer-v2 contract check) |
 | `0.4.2` | `0.1.6-alpha.1` (local source and renderer-v2 contract check) |
 | `0.4.1` | `0.1.6-alpha.1` (local source and renderer-v2 contract check) |
@@ -329,6 +331,10 @@ dsh plugin --profile web remove dsh-mobile
 ```
 
 Source users replace `dsh` with `pnpm dsh`.
+
+## Contributors
+
+Thanks to everyone who submitted PRs, reproduced issues, or proposed improvements. [The contributors list](CONTRIBUTORS.md) credits merged PRs, PR work later incorporated without a direct merge, and issue reports separately. GitHub's sidebar Contributors panel is generated from commits on the default branch and cannot be manually extended with issue-only contributors.
 
 ## Development
 

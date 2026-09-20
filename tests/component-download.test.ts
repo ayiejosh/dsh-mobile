@@ -42,6 +42,28 @@ describe('pinned component download', () => {
     expect(calls).toEqual([{ url: URL_PINNED, redirect: 'manual' }])
   })
 
+  it('accepts an exact response when the server omits Content-Length', async () => {
+    stubFetch([response(200, {})])
+    const bytes = await downloadPinnedArtifact({
+      url: URL_PINNED, expectedBytes: BYTES.byteLength, errorPrefix: 'tool', signal: new AbortController().signal,
+    })
+    expect([...bytes]).toEqual([...BYTES])
+  })
+
+  it('cancels an unbounded response before reading past the pinned size', async () => {
+    let cancelled = false
+    const body = new ReadableStream<Uint8Array>({
+      start(controller) { controller.enqueue(new TextEncoder().encode(`${BODY}extra`)) },
+      pull() { throw new Error('read after the size cap') },
+      cancel() { cancelled = true },
+    }, { highWaterMark: 0 })
+    stubFetch([new Response(body, { status: 200 })])
+    await expect(downloadPinnedArtifact({
+      url: URL_PINNED, expectedBytes: BYTES.byteLength, errorPrefix: 'tool', signal: new AbortController().signal,
+    })).rejects.toThrow('tool_download_size_mismatch')
+    expect(cancelled).toBe(true)
+  })
+
   it('follows exactly one redirect to a release asset host', async () => {
     // This is the shape every GitHub release download uses, and the one `redirect: 'error'` broke.
     const calls = stubFetch([

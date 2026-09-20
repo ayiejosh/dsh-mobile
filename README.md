@@ -24,20 +24,21 @@
   <a href="#第三方插件适配">第三方插件适配</a> ·
   <a href="#安全">安全</a> ·
   <a href="#兼容性">兼容性</a> ·
+  <a href="#贡献者">贡献者</a> ·
   <a href="CHANGELOG.md">更新记录</a> ·
   <a href="README.en.md">English</a>
 </p>
 
 > DSH Mobile 是 DeepSeek Harness 社区插件，原生 App 仅支持 Android。
 >
-> **0.4.3 更新**：Funnel、cpolar、cloudflared 远程通道支持 Linux（x64/arm64）；保存的局域网网卡断开不再阻断整个 DSH 启动（休眠等网卡回来）；插件多的用户手机端白屏修好（启动包分片 + 大 bundle 直通）。[详细记录](CHANGELOG.md)。
+> **0.4.4 更新**：局域网发现遇到运行期 mDNS/UDP 错误时不再带崩 DSH；组件下载也能处理缺少 `Content-Length` 的代理响应。[详细记录](CHANGELOG.md)。
 >
-> **升级提醒**：0.4.3 插件可继续使用现有 Android App，已有设备无需重新配对。若要使用本次 Android 构建，请同时安装 0.4.3 App。[兼容说明](#兼容性)。
+> **升级提醒**：0.4.4 插件可继续使用现有 Android App，已有设备无需重新配对。若要使用本次 Android 构建，请安装 0.4.4 App。[兼容说明](#兼容性)。
 
 <p align="center">
-  <a href="https://github.com/saya-ch/dsh-mobile/releases/download/v0.4.3/dsh-mobile-android-v0.4.3.apk"><img src="assets/brand/app-icon-rounded.svg" alt="DSH Mobile 安卓应用图标" width="72" height="72"></a><br>
-  <a href="https://github.com/saya-ch/dsh-mobile/releases/download/v0.4.3/dsh-mobile-android-v0.4.3.apk"><strong>下载 Android App 0.4.3</strong></a><br>
-  <sub><a href="https://github.com/saya-ch/dsh-mobile/releases/tag/v0.4.3">版本说明与校验文件</a></sub>
+  <a href="https://github.com/saya-ch/dsh-mobile/releases/download/v0.4.4/dsh-mobile-android-v0.4.4.apk"><img src="assets/brand/app-icon-rounded.svg" alt="DSH Mobile 安卓应用图标" width="72" height="72"></a><br>
+  <a href="https://github.com/saya-ch/dsh-mobile/releases/download/v0.4.4/dsh-mobile-android-v0.4.4.apk"><strong>下载 Android App 0.4.4</strong></a><br>
+  <sub><a href="https://github.com/saya-ch/dsh-mobile/releases/tag/v0.4.4">版本说明与校验文件</a></sub>
 </p>
 
 DSH Mobile 是一个 DeepSeek Harness 插件，让手机浏览器或 Android App 通过局域网，或可选的 Tailscale Funnel、cpolar、cloudflared、自建 FRP 或自有反向代理远程通道连接电脑，继续使用同一份会话、工作区、消息和工具。局域网与远程访问分别启停、分别管理设备，且都不修改 DeepSeek Harness 源码。
@@ -215,7 +216,7 @@ Android App 用一个“已配对设备”列表同时显示多台电脑：局�
 
 代理页面为兼容部分社区插件允许嵌入 HTTP 页面；这类内容未加密，可能被篡改，浏览器也可能因混合内容策略拦截。处理敏感内容时请使用 HTTPS。通过 HTTPS 管理入口打开远程面板时，页面顶部会显示相同提醒。
 
-- 已发布的 0.4.3 按 DSH `0.1.6-alpha.2` 做过 renderer-v2 合同检查。DSH 页面需要提供标准的会话、`main`/`panelInfo` 和 `rightbar` 插槽；插件自身需要通过 DSH 的标准面板或侧边栏入口注册内容。
+- 0.4.4 按 DSH `0.1.6-alpha.2` 做 renderer-v2 契约检查。DSH 页面需要提供标准的会话、`main`/`panelInfo` 和 `rightbar` 插槽；插件自身需要通过 DSH 的标准面板或侧边栏入口注册内容。
 - 网关默认只允许 DSH 内置的第一方 WebSocket 路径。社区侧边栏插件使用的其他路径默认拦截，通常会在诊断页显示为待处理项目；截图中的`/sidebar/ws/agent-opens` 和`/sidebar/ws/agent-terminals` 就属于这类需要按实际插件确认的路径。
 - 在 **连接诊断 → 第三方 WebSocket 路径** 中，只对确认过的精确路径点击 **允许**。系统不接受带查询字符串或模糊前缀的路径；不建议使用“全部允许”。已允许的路径可以随时移除，局域网和远程连接使用同一套规则。
 - 放行只代表该路径可以通过已认证、同源的 DSH Mobile 网关，不会开放任意 TCP/UDP 端口，也不会绕过设备配对。若社区插件仍然连接失败，先看诊断页的实际拦截路径，再按一条路径放行。
@@ -303,6 +304,7 @@ macOS 上局域网、自建 FRP 与自有反向代理可用；三个托管组件
 
 | DSH Mobile 插件                         | 验证支持的 DeepSeek Harness 版本                             |
 | ----------------------------------------- | -------------------------------------------------------------- |
+| `0.4.4` | `0.1.6-alpha.2`（本机源码与 renderer-v2 契约检查） |
 | `0.4.3` | `0.1.6-alpha.2`（本机源码与 renderer-v2 契约检查） |
 | `0.4.2` | `0.1.6-alpha.1`（本机源码与 renderer-v2 契约检查） |
 | `0.4.1` | `0.1.6-alpha.1`（本机源码与 renderer-v2 契约检查） |
@@ -330,6 +332,10 @@ dsh plugin --profile web remove dsh-mobile
 ```
 
 源码模式把上述 `dsh` 换成 `pnpm dsh`。
+
+## 贡献者
+
+感谢提交 PR、复现问题和提出建议的社区成员。[贡献者名单](CONTRIBUTORS.md)按已合并 PR、后来吸收的 PR 工作和 issue 反馈分别致谢；GitHub 右侧的 Contributors 区域由进入默认分支的提交自动生成，不能手动加入仅反馈问题的成员。
 
 ## 开发
 

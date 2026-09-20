@@ -2,6 +2,12 @@
 
 Notable changes to DSH Mobile are recorded here. GitHub Releases remain the source for downloadable packages and complete generated commit notes.
 
+## 0.4.4 - 2026-09-20
+
+- Keep DSH running if mDNS response callbacks, the multicast-dns emitter, or the already-bound UDP discovery socket reports a network error. LAN discovery records the degraded channel and logs the error code while the authenticated HTTP and WebSocket gateway remains available (thanks @KMGTPEZY for [#95](https://github.com/saya-ch/dsh-mobile/issues/95)).
+- Accept pinned cpolar and cloudflared component downloads when a proxy omits `Content-Length`, and stop reading as soon as the response exceeds the pinned size.
+- Credit community PR authors, including work adapted after a PR was closed, and every historical issue author by contribution type in [CONTRIBUTORS.md](CONTRIBUTORS.md), separately from GitHub's commit-based Contributors panel.
+
 ## 0.4.3 - 2026-09-19
 
 - Support Linux for the Funnel, cpolar and cloudflared remote providers, including x64 and arm64 Funnel host binaries.

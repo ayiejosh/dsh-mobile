@@ -375,6 +375,7 @@ async function gateway(
   upstreamAuthenticatedUrl?: string,
   extraWebSocketPaths: readonly string[] = [],
   blockedUpgradeLog?: BlockedUpgradePathLog,
+  onDiscoveryDegraded?: (source: 'broadcast' | 'mdns', code: string) => void,
 ): Promise<MobileAccessGateway> {
   const resolved = parseGatewayConfig({
     listenHost: '127.0.0.1',
@@ -388,7 +389,10 @@ async function gateway(
   })
   const effective = testSessionTtlMs === undefined ? resolved : Object.freeze({ ...resolved, sessionTtlMs: testSessionTtlMs })
   const extra = new Set(extraWebSocketPaths)
-  const instance = new MobileAccessGateway(effective, new MemoryDeviceStore(), undefined, upstreamAuthenticatedUrl, { has: (pathname: string) => extra.has(pathname) }, blockedUpgradeLog)
+  const instance = new MobileAccessGateway(
+    effective, new MemoryDeviceStore(), undefined, upstreamAuthenticatedUrl,
+    { has: (pathname: string) => extra.has(pathname) }, blockedUpgradeLog, onDiscoveryDegraded,
+  )
   await instance.start()
   cleanups.push(() => instance.close())
   return instance
@@ -1252,6 +1256,65 @@ describe('HTTP gateway', () => {
     expect(JSON.parse(status.body)).toMatchObject({
       discovery: { broadcast: false, mdns: true, errorCode: 'discovery_broadcast_EADDRINUSE' },
     })
+  })
+
+  it('keeps the gateway alive when Bonjour reports a multicast response failure', async () => {
+    const inner = await upstream()
+    const degraded: string[] = []
+    const instance = await gateway(inner.port, {}, undefined, undefined, [], undefined, (source, code) => {
+      degraded.push(`${source}:${code}`)
+    })
+    const bonjour = (instance as unknown as {
+      bonjour?: { server: { errorCallback: (error: Error) => void } }
+    }).bonjour
+    expect(bonjour).toBeDefined()
+    expect(() => bonjour!.server.errorCallback(Object.assign(new Error('network changed'), { code: 'ENETUNREACH' })))
+      .not.toThrow()
+    expect(instance.discoveryStatus()).toMatchObject({ mdns: false, mdnsErrorCode: 'discovery_mdns_ENETUNREACH' })
+    expect(degraded).toEqual(['mdns:ENETUNREACH'])
+    expect((await request(instance.address().port, '/mobile-access/discovery', {
+      headers: { host: new URL(instance.address().origin).host },
+    })).status).toBe(200)
+  })
+
+  it('keeps the gateway alive when multicast-dns emits an error', async () => {
+    const inner = await upstream()
+    const instance = await gateway(inner.port)
+    const bonjour = (instance as unknown as {
+      bonjour?: { server: { mdns: { emit(event: string, error: Error): boolean } } }
+    }).bonjour
+    expect(bonjour).toBeDefined()
+    expect(() => bonjour!.server.mdns.emit('error', Object.assign(new Error('address in use'), { code: 'EADDRINUSE' })))
+      .not.toThrow()
+    expect(instance.discoveryStatus()).toMatchObject({ mdns: false, mdnsErrorCode: 'discovery_mdns_EADDRINUSE' })
+    const route = instance.localAdminRoute()
+    const adminServer = createServer((incoming, response) => { void route.handler(incoming, response) })
+    const adminPort = await listen(adminServer)
+    cleanups.push(() => closeServer(adminServer))
+    const status = await request(adminPort, '/api/mobile-access/status', {
+      headers: { host: `127.0.0.1:${String(adminPort)}` },
+    })
+    expect(JSON.parse(status.body)).toMatchObject({
+      discovery: { mdns: false, mdnsErrorCode: 'discovery_mdns_EADDRINUSE' },
+    })
+  })
+
+  it('keeps HTTP and mDNS alive after a running broadcast socket fails', async () => {
+    const inner = await upstream()
+    const instance = await gateway(inner.port)
+    const socket = (instance as unknown as { discoverySocket?: ReturnType<typeof createSocket> }).discoverySocket
+    if (socket === undefined) {
+      // Some Windows hosts refuse UDP on the port assigned to the TCP listener.
+      // That startup degradation is covered above; only a bound socket can emit
+      // the running-socket error exercised here on hosts where binding succeeds.
+      expect(instance.discoveryStatus()).toMatchObject({ broadcast: false, errorCode: expect.any(String) })
+      return
+    }
+    expect(() => socket.emit('error', Object.assign(new Error('network changed'), { code: 'ENETDOWN' }))).not.toThrow()
+    expect(instance.discoveryStatus()).toMatchObject({ broadcast: false, mdns: true, errorCode: 'discovery_broadcast_ENETDOWN' })
+    expect((await request(instance.address().port, '/mobile-access/discovery', {
+      headers: { host: new URL(instance.address().origin).host },
+    })).status).toBe(200)
   })
 
   it('reports a missing bundled mobile asset instead of leaving a silent 503 subresource', async () => {

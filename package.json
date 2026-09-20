@@ -1,6 +1,6 @@
 {
   "name": "dsh-mobile",
-  "version": "0.4.3",
+  "version": "0.4.4",
   "private": false,
   "description": "DeepSeek Harness 移动端适配与安全访问插件，支持局域网、远程连接、Android App 和手机浏览器。",
   "type": "module",
@@ -34,6 +34,7 @@
     "README.md",
     "README.en.md",
     "CHANGELOG.md",
+    "CONTRIBUTORS.md",
     "docs/README.md",
     "docs/DSH_0.1.5_LAN.md",
     "docs/CLOUDFLARE_TUNNEL.md",
@@ -139,7 +140,7 @@
   },
   "dependencies": {
     "@deepseek-ai/schemastery": "^3.18.1",
-    "bonjour-service": "^1.4.4",
+    "bonjour-service": "1.4.4",
     "qrcode": "^1.5.4",
     "selfsigned": "^5.5.0"
   },
