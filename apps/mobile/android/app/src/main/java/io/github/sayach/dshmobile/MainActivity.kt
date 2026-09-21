@@ -117,6 +117,7 @@ class MainActivity : Activity() {
     private val ioExecutor = Executors.newSingleThreadExecutor()
     private val restoreExecutor = Executors.newFixedThreadPool(3)
     private val recoveryHandler = Handler(Looper.getMainLooper())
+    private val restoreUiHandler = Handler(Looper.getMainLooper())
     private val deviceStatusHandler = Handler(Looper.getMainLooper())
     private var webView: WebView? = null
     private var secureWebViewClient: SecureWebViewClient? = null
@@ -141,6 +142,7 @@ class MainActivity : Activity() {
     private var connectionCenterStatus: TextView? = null
     private var recoveryAttempt = 0
     private var recoveryScheduled = false
+    private var restoreEscapeRunnable: Runnable? = null
     private val warnedTailscaleOrigins = mutableSetOf<String>()
     private var deviceListGeneration = 0
     private var deviceListRefreshRunnable: Runnable? = null
@@ -250,6 +252,7 @@ class MainActivity : Activity() {
         dismissDeviceUndo()
         stopDeviceListRefresh()
         cancelAutomaticRecovery()
+        cancelRestoreEscape()
         invalidateRestoreAttempts()
         invalidatePairingAttempts()
         failureDialog?.dismiss()
@@ -347,16 +350,21 @@ class MainActivity : Activity() {
             showDeviceList()
             return
         }
+        activeDeviceKey = preferred.key
+        restoreStartupDevice(preferred)
+    }
+
+    private fun restoreStartupDevice(device: PairedDeviceRecord) {
         // Direct startup should not flash the device list. Keep a small native
         // loading surface while the most recently used device is renewed.
         showRestoringTrust()
-        activeDeviceKey = preferred.key
+        activeDeviceKey = device.key
         restoreTrustedDevice(
-            preferredOrigin = preferred.origin,
-            credential = preferred.credential(),
-            mode = preferred.mode,
+            preferredOrigin = device.origin,
+            credential = device.credential(),
+            mode = device.mode,
             generation = beginRestoreAttempt(),
-            deviceKey = preferred.key,
+            deviceKey = device.key,
         ) { disposition ->
             if (disposition == RestoreFailureDisposition.RETRY_TRANSIENT) {
                 if (!scheduleAutomaticRecovery() && !isFinishing && !isDestroyed) {
@@ -380,6 +388,7 @@ class MainActivity : Activity() {
 
     /** Render the stable device-management root used when more than one computer is paired. */
     private fun showDeviceList() {
+        cancelRestoreEscape()
         stopDeviceListRefresh()
         invalidateRestoreAttempts()
         invalidatePairingAttempts()
@@ -777,6 +786,7 @@ class MainActivity : Activity() {
     }
 
     private fun showConnectionChoices() {
+        cancelRestoreEscape()
         stopDeviceListRefresh()
         deviceListVisible = false
         invalidateRestoreAttempts()
@@ -1028,6 +1038,7 @@ class MainActivity : Activity() {
     }
 
     private fun showRestoringTrust() {
+        cancelRestoreEscape()
         stopDeviceListRefresh()
         deviceListVisible = false
         showingSetup = false
@@ -1048,12 +1059,55 @@ class MainActivity : Activity() {
         content.addView(textView(R.string.restoring_trust, 16f, Typeface.NORMAL, R.color.app_secondary).apply {
             gravity = Gravity.CENTER
         })
+        content.addView(spacer(12))
+        val escapeMessage = textView(R.string.restore_taking_longer, 14f, Typeface.NORMAL, R.color.app_secondary).apply {
+            gravity = Gravity.CENTER
+            visibility = View.GONE
+        }
+        content.addView(escapeMessage)
+        content.addView(spacer(12))
+        val escapeActions = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            visibility = View.GONE
+        }
+        escapeActions.addView(
+            secondaryButton(R.string.retry, 48) { retryActiveRestore() },
+            LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT),
+        )
+        escapeActions.addView(spacer(8))
+        escapeActions.addView(
+            primaryButton(R.string.restore_show_devices, 48) { showDeviceList() },
+            LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT),
+        )
+        content.addView(escapeActions)
         root.addView(content, FrameLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT))
         setContentView(root)
         applySafeAreaInsets(root)
+        restoreEscapeRunnable = Runnable {
+            if (!isFinishing && !isDestroyed && webView == null && !showingSetup) {
+                escapeMessage.visibility = View.VISIBLE
+                escapeActions.visibility = View.VISIBLE
+            }
+        }.also { restoreUiHandler.postDelayed(it, RESTORE_ESCAPE_DELAY_MS) }
+    }
+
+    private fun retryActiveRestore() {
+        val device = activeDeviceKey?.let { key -> pairedDeviceStore.load().firstOrNull { it.key == key } }
+        if (device == null) {
+            showConnectionCenter()
+            return
+        }
+        cancelAutomaticRecovery()
+        restoreStartupDevice(device)
+    }
+
+    private fun cancelRestoreEscape() {
+        restoreEscapeRunnable?.let(restoreUiHandler::removeCallbacks)
+        restoreEscapeRunnable = null
     }
 
     private fun showPairing(harness: DiscoveredHarness, prefilledInput: String = "", autoConnect: Boolean = false) {
+        cancelRestoreEscape()
         stopDeviceListRefresh()
         invalidatePairingAttempts()
         deviceListVisible = false
@@ -1835,6 +1889,7 @@ class MainActivity : Activity() {
         caCertificate: ByteArray?,
         requestedInitialUrl: String = origin.serialized,
     ) {
+        cancelRestoreEscape()
         if (!isOriginAllowedForAccessMode(origin)) {
             preferences.edit().remove(originPreference()).apply()
             credentialStore().clear()
@@ -2363,6 +2418,7 @@ class MainActivity : Activity() {
         const val SCAN_QR_REQUEST = 4106
         const val DEVICE_STATUS_REFRESH_MS = 20_000L
         const val DEVICE_UNDO_TIMEOUT_MS = 6_000L
+        const val RESTORE_ESCAPE_DELAY_MS = 12_000L
         const val APP_RELEASES_URL = "https://github.com/saya-ch/dsh-mobile/releases/latest"
         val RECOVERY_DELAYS_MS = longArrayOf(0L, 1_000L, 3_000L, 8_000L)
         val MIME_TYPE = Regex("^[a-z0-9!#$&^_.+-]+/[a-z0-9!#$&^_.+*-]+$")

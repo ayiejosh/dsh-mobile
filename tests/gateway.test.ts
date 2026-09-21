@@ -13,7 +13,7 @@ import {
 import { request as requestHttps } from 'node:https'
 import { isAbsolute, join, relative } from 'node:path'
 import { tmpdir } from 'node:os'
-import { connect, type AddressInfo, type Socket } from 'node:net'
+import { connect, Socket, type AddressInfo } from 'node:net'
 import { gunzipSync } from 'node:zlib'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { parseGatewayConfig } from '../src/config.js'
@@ -1830,6 +1830,26 @@ describe('HTTP gateway', () => {
 })
 
 describe('WebSocket gateway', () => {
+  it('guards an upgrade socket before validation or asynchronous work begins', async () => {
+    const inner = await upstream()
+    const instance = await gateway(inner.port)
+    const server = (instance as unknown as { server?: Server }).server
+    expect(server).toBeDefined()
+    const socket = new Socket()
+    const incoming = {
+      method: 'GET',
+      url: '/api/events.mux',
+      headers: {},
+      socket,
+    } as IncomingMessage
+
+    expect(() => server!.emit('upgrade', incoming, socket, Buffer.alloc(0))).not.toThrow()
+    expect(() => socket.emit('error', Object.assign(new Error('stale connection reset'), { code: 'ECONNRESET' })))
+      .not.toThrow()
+    await Promise.resolve()
+    expect(socket.destroyed).toBe(true)
+  })
+
   it('forwards a large first frame delivered with the upstream upgrade response', async () => {
     const firstFrame = websocketBinaryFrame(Buffer.alloc(26 * 1024, 0x5a))
     const inner = await upstream('legacy', false, firstFrame)

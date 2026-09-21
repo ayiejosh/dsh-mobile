@@ -45,7 +45,7 @@
         <item quantity="other">发现 %d 个 DSH，点击其中一个开始配对。</item>
     </plurals>
     <string name="pairing_key_label">配对密钥</string>
-    <string name="pairing_key_hint">粘贴 DSH 的配对密钥或配对链接</string>
+    <string name="pairing_key_hint">粘贴 DSH 的 43 位配对码、dsh1 App 密钥或配对链接</string>
     <string name="invalid_pairing_key">配对信息无效\n密钥或链接格式不正确，或属于另一台电脑。请在电脑端重新生成并完整粘贴。</string>
     <string name="pairing_in_progress">正在配对这台手机…</string>
     <string name="pairing_failed">配对失败\n二维码可能已过期、已使用，或电脑暂时不可达。请确认网络正常后重新生成二维码并立即重试。</string>
@@ -84,6 +84,8 @@
     <string name="download_failed">下载失败\n文件可能已失效或网络中断。请检查连接后重试。</string>
     <string name="share_gateway_title">分享 DSH 地址</string>
     <string name="restoring_trust">正在恢复与这台 DSH 的可信连接…</string>
+    <string name="restore_taking_longer">连接时间较长。你可以重试，或选择其他连接方式。</string>
+    <string name="restore_show_devices">查看设备列表</string>
     <string name="open_harness_trusted">重新连接可信设备 %1$s</string>
     <string name="scanning_lan_limited">正在以受限方式扫描… 未授予附近设备权限，App 仍会继续尝试 UDP 与 HTTPS 兼容探测。</string>
     <string name="pairing_expired">配对链接已失效\n一次性二维码已过期或已使用。请在电脑端重新生成，并立即扫描。</string>

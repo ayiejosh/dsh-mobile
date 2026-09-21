@@ -808,6 +808,13 @@ function discoveryBroadcastTargets(cidrs: readonly ParsedCidr[]): readonly strin
   return [...targets]
 }
 
+/** Keep Node's upgrade-owned socket safe after the HTTP parser removes its listener. */
+function guardUpgradeSocket(socket: Socket): void {
+  socket.on('error', () => {
+    if (!socket.destroyed) socket.destroy()
+  })
+}
+
 function discoveryFailure(error: unknown): { readonly code: string; readonly message: string } {
   const code = error instanceof Error && typeof (error as NodeJS.ErrnoException).code === 'string'
     ? (error as NodeJS.ErrnoException).code!
@@ -1055,9 +1062,14 @@ export class MobileAccessGateway {
       })
       server.on('connect', (_request, socket) => { socket.destroy() })
       server.on('upgrade', (request, socket, head) => {
-        void this.handleUpgrade(request, socket as Socket, head).catch((error: unknown) => {
+        const client = socket as Socket
+        // Node removes its normal connection error listener when it hands this
+        // socket to the upgrade event. Install ours before any sync validation
+        // or await so a stale TLS/WebSocket connection cannot terminate DSH.
+        guardUpgradeSocket(client)
+        void this.handleUpgrade(request, client, head).catch((error: unknown) => {
           const mapped = mapError(error)
-          rejectUpgrade(socket as Socket, mapped.status, mapped.code)
+          rejectUpgrade(client, mapped.status, mapped.code)
         })
       })
       server.on('clientError', (_error, socket) => { rejectUpgrade(socket as Socket, 400, 'bad_request') })
@@ -2634,6 +2646,7 @@ export class MobileAccessGateway {
     const authorization = this.authorize(request)
     if (this.activeWebSockets.size >= this.config.maxWebSockets) throw new HttpError(429, 'busy')
     const upstreamCookie = await this.upstreamCookieHeader()
+    if (client.destroyed) return
 
     const upstream = connect({
       host: stripIpv6Brackets(this.config.upstreamOrigin.hostname),

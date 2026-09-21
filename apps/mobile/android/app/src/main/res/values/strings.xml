@@ -46,7 +46,7 @@
         <item quantity="other">%d DSH installations found. Select one to pair.</item>
     </plurals>
     <string name="pairing_key_label">Pairing key</string>
-    <string name="pairing_key_hint">Paste the pairing key or pairing link from DSH</string>
+    <string name="pairing_key_hint">Paste the 43-character pairing code, dsh1 app key, or pairing link from DSH</string>
     <string name="invalid_pairing_key">Invalid pairing information\nThe key or link is malformed or belongs to another computer. Generate it again on the computer and paste it in full.</string>
     <string name="pairing_in_progress">Pairing this phone…</string>
     <string name="pairing_failed">Pairing failed\nThe QR code may be expired or already used, or the computer may be unreachable. Check the connection, generate a new QR code, and try it immediately.</string>
@@ -85,6 +85,8 @@
     <string name="download_failed">Download failed\nThe file may no longer be available or the network was interrupted. Check the connection and try again.</string>
     <string name="share_gateway_title">Share DSH address</string>
     <string name="restoring_trust">Reconnecting to this trusted DSH…</string>
+    <string name="restore_taking_longer">Taking longer than expected. You can retry or choose another connection.</string>
+    <string name="restore_show_devices">Show device list</string>
     <string name="open_harness_trusted">Reconnect to trusted %1$s</string>
     <string name="scanning_lan_limited">Scanning with limited discovery… Nearby devices permission was declined; direct UDP and HTTPS fallbacks will still run.</string>
     <string name="pairing_expired">Pairing link expired\nThe one-time QR code was expired or already used. Generate a new QR code on the computer and scan it immediately.</string>
