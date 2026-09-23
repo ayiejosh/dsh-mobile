@@ -287,6 +287,27 @@ async function upstream(
       response.end(body)
       return
     }
+    // A stale `rev` (the host restarted and re-issued a fresh nonce) and a
+    // vanished build hash both end here: a bare rejection with no cache-control,
+    // exactly as upstream DSH answers them.
+    if (incoming.url?.startsWith('/plugins/stale-revision.js') === true) {
+      const body = 'unknown revision\n'
+      response.writeHead(404, {
+        'content-type': 'text/plain; charset=utf-8',
+        'content-length': Buffer.byteLength(body),
+      })
+      response.end(body)
+      return
+    }
+    if (incoming.url?.startsWith('/assets/stale-') === true) {
+      const body = 'not found\n'
+      response.writeHead(404, {
+        'content-type': 'text/plain; charset=utf-8',
+        'content-length': Buffer.byteLength(body),
+      })
+      response.end(body)
+      return
+    }
     if (incoming.url?.startsWith('/plugins/compressible.js') === true) {
       response.writeHead(200, {
         'content-type': 'text/javascript; charset=utf-8',
@@ -1591,6 +1612,35 @@ describe('HTTP gateway', () => {
     expect(revisioned.status).toBe(200)
     expect(revisioned.headers['cache-control']).toBe('private, max-age=31536000, immutable')
     expect(gunzipSync(revisioned.rawBody).toString('utf8')).toBe(COMPRESSIBLE_SCRIPT)
+  })
+
+  it('never marks a rejected revision or hashed asset as immutable', async () => {
+    const inner = await upstream()
+    const instance = await gateway(inner.port)
+    const paired = await pair(instance)
+    const headers = {
+      ...browserHeaders(instance),
+      cookie: `${SESSION_COOKIE}=${paired.session}`,
+    }
+
+    // `rev` is a per-host-start nonce, so a URL the page already holds keeps its
+    // shape after a restart while its revision is gone. Upstream answers such a
+    // request with a bare 404 and no cache-control; the gateway must not upgrade
+    // that into a year-long `immutable` entry, or the WebView pins the rejection
+    // and the plugin stays broken across every later boot.
+    const stalePlugin = await request(instance.address().port, '/plugins/stale-revision.js?rev=6cc8c4a085f17d9c-50', { headers })
+    expect(stalePlugin.status).toBe(404)
+    expect(stalePlugin.headers['cache-control']).toBe('no-store')
+
+    const staleAsset = await request(instance.address().port, '/assets/stale-chunk-a1b2c3d4.js', { headers })
+    expect(staleAsset.status).toBe(404)
+    expect(staleAsset.headers['cache-control']).toBe('no-store')
+
+    // A rejected revision stays uncacheable, while the identical URL that the
+    // host actually serves keeps its immutable directive.
+    const served = await request(instance.address().port, '/plugins/compressible.js?rev=content_1234', { headers })
+    expect(served.status).toBe(200)
+    expect(served.headers['cache-control']).toBe('private, max-age=31536000, immutable')
   })
 
   it('uses mobile-sized pages and compresses session history', async () => {

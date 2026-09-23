@@ -676,8 +676,22 @@ function shouldCompressResponse(request: IncomingMessage, response: IncomingMess
     && isCompressibleContentType(response.headers['content-type'])
 }
 
-function revisionedStaticCacheControl(request: IncomingMessage): string | undefined {
+function revisionedStaticCacheControl(
+  request: IncomingMessage,
+  statusCode: number | undefined,
+): string | undefined {
   if (request.method !== 'GET' && request.method !== 'HEAD') return undefined
+  // Only a delivered artifact is immutable. A rev-bearing URL is unique per
+  // build, so a 200 for it can never change — but an error for the same URL is
+  // not that artifact. Stamping `max-age=31536000, immutable` onto a failure
+  // lets the WebView cache the rejection for a year: `rev` is a per-host-start
+  // nonce, so once the host restarts the bundle URL the page already holds is
+  // rejected, and the poisoned entry makes the plugin fail on every later boot
+  // until the browser cache is cleared. Upstream DSH only attaches its
+  // immutable directive on the success path; failures there carry no
+  // cache-control at all, so the gateway keeps `no-store` from
+  // setSecurityHeaders instead.
+  if (statusCode !== 200) return undefined
   let target: URL
   try { target = new URL(request.url ?? '/', 'https://dsh-mobile.invalid') } catch { return undefined }
   const revision = target.searchParams.get('rev')
@@ -2384,7 +2398,8 @@ export class MobileAccessGateway {
       // so they follow the proxied framing policy.
       setSecurityHeaders(response, this.tlsEnabled, 'proxied')
       const headers = sanitizeResponseHeaders(proxied.headers, this.config.upstreamOrigin)
-      const cacheControl = revisionedStaticCacheControl(request)
+      const statusCode = proxied.statusCode ?? 502
+      const cacheControl = revisionedStaticCacheControl(request, statusCode)
       if (cacheControl !== undefined) headers['cache-control'] = cacheControl
       const compressed = shouldCompressResponse(request, proxied)
       if (compressed) {
@@ -2394,7 +2409,7 @@ export class MobileAccessGateway {
         headers['content-encoding'] = 'gzip'
         addVaryAcceptEncoding(headers)
       }
-      response.writeHead(proxied.statusCode ?? 502, headers)
+      response.writeHead(statusCode, headers)
       await Promise.all([
         bodyDone,
         compressed ? pipeline(proxied, createGzip(), response) : pipeline(proxied, response),

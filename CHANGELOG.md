@@ -2,6 +2,10 @@
 
 Notable changes to DSH Mobile are recorded here. GitHub Releases remain the source for downloadable packages and complete generated commit notes.
 
+## Unreleased
+
+- Stop marking a failed revisioned bundle as immutable. The mobile gateway rewrites `cache-control` on rev-bearing `/plugins` and hashed `/assets` URLs, and it stamped `private, max-age=31536000, immutable` on whatever upstream answered — including the 404 a stale revision gets. `rev` is re-issued every host start, so a URL the page already holds keeps its shape across a restart while its revision is gone; once the WebView had cached that year-long rejection, the plugin failed on every later boot and only clearing the browser cache healed it. Upstream DSH attaches its immutable directive on the success path only, so the gateway now restricts it to `200` responses and leaves every rejection on the `no-store` the security headers already set (thanks @abworks-dev).
+
 ## 0.4.4 - 2026-09-20
 
 - Keep DSH running if mDNS response callbacks, the multicast-dns emitter, or the already-bound UDP discovery socket reports a network error. LAN discovery records the degraded channel and logs the error code while the authenticated HTTP and WebSocket gateway remains available (thanks @KMGTPEZY for [#95](https://github.com/saya-ch/dsh-mobile/issues/95)).
