@@ -110,21 +110,78 @@ interface TransportHooks {
   loadBundle?: () => void
 }
 
+/** Minimal DOM event target with capture ordering and immediate-propagation stops. */
+function createEventTarget() {
+  interface Entry { readonly type: string; readonly fn: (event: PageEvent) => void; readonly capture: boolean }
+  interface PageEvent {
+    readonly type: string
+    defaultPrevented: boolean
+    immediateStopped: boolean
+    stopImmediatePropagation(): void
+    preventDefault(): void
+  }
+  const entries: Entry[] = []
+  const captureOf = (options?: boolean | { capture?: boolean }): boolean =>
+    typeof options === 'boolean' ? options : options?.capture === true
+  return {
+    entries,
+    addEventListener(type: string, fn: (event: PageEvent) => void, options?: boolean | { capture?: boolean }): void {
+      entries.push({ type, fn, capture: captureOf(options) })
+    },
+    removeEventListener(type: string, fn: (event: PageEvent) => void, options?: boolean | { capture?: boolean }): void {
+      const capture = captureOf(options)
+      const at = entries.findIndex(entry => entry.type === type && entry.fn === fn && entry.capture === capture)
+      if (at >= 0) entries.splice(at, 1)
+    },
+    /** Capture listeners run before bubble listeners, as the DOM specifies. */
+    dispatch(type: string): PageEvent {
+      const ordered = [...entries.filter(entry => entry.type === type && entry.capture),
+        ...entries.filter(entry => entry.type === type && !entry.capture)]
+      let immediateStopped = false
+      const event: PageEvent = {
+        type,
+        defaultPrevented: false,
+        get immediateStopped() { return immediateStopped },
+        stopImmediatePropagation() { immediateStopped = true },
+        preventDefault() { event.defaultPrevented = true },
+      }
+      for (const entry of ordered) {
+        if (immediateStopped) break
+        entry.fn(event)
+      }
+      return event
+    },
+  }
+}
+
 function bootstrapPage(html: string, existingTransport?: TransportHooks) {
   const nativeFetch = vi.fn<typeof fetch>(async () => new Response('{}', { status: 200 }))
   const nativeBridge = Object.freeze({ request: vi.fn() })
+  const events = createEventTarget()
+  const navigator = { onLine: true }
   const page: {
     fetch: typeof fetch
     __DSH_TRANSPORT__?: TransportHooks
     __DSH_BOOT__?: unknown
     __DSH_MOBILE_FRONTEND__?: string
     dshMobileNative: typeof nativeBridge
-  } = { fetch: nativeFetch, dshMobileNative: nativeBridge }
+    navigator: typeof navigator
+    addEventListener: typeof events.addEventListener
+    removeEventListener: typeof events.removeEventListener
+  } = {
+    fetch: nativeFetch,
+    dshMobileNative: nativeBridge,
+    navigator,
+    addEventListener: events.addEventListener,
+    removeEventListener: events.removeEventListener,
+  }
   if (existingTransport !== undefined) page.__DSH_TRANSPORT__ = existingTransport
   const script = /<script>([\s\S]*?)<\/script>/u.exec(html)?.[1]
   if (script === undefined) throw new Error('missing bootstrap script')
   return {
     page,
+    navigator,
+    events,
     nativeFetch,
     nativeBridge,
     run() {
@@ -295,6 +352,46 @@ describe('dedicated mobile layout boot', () => {
     expect(bootstrap.page.fetch).toBe(bootstrap.nativeFetch)
     expect(bootstrap.page.__DSH_BOOT__).toBeUndefined()
     expect(bootstrap.page.__DSH_MOBILE_FRONTEND__).toBeUndefined()
+  })
+
+  it('pins navigator.onLine so a LAN-only tablet is never reported offline', () => {
+    const bootstrap = bootstrapPage(rewriteMobileIndex(currentIndex(remoteSettingsEntries())))
+    // Simulate the real failure: the OS reports no public internet while the
+    // gateway is reachable over the LAN.
+    bootstrap.navigator.onLine = false
+    bootstrap.run()
+    expect(bootstrap.page.navigator.onLine).toBe(true)
+    // The pin is a getter, so a later platform write cannot flip it back.
+    expect(bootstrap.page.navigator.onLine).toBe(true)
+  })
+
+  it('stops the offline event before DSH connection recovery can suspend retries', () => {
+    const bootstrap = bootstrapPage(rewriteMobileIndex(currentIndex(remoteSettingsEntries())))
+    bootstrap.run()
+    // Mirrors dsh-client-connection's watchBrowserNetwork listener, which is the
+    // only consumer of `offline` in DSH and publishes `disconnected` on it.
+    const suspended = vi.fn()
+    bootstrap.page.addEventListener('offline', suspended)
+    const event = bootstrap.events.dispatch('offline')
+    expect(suspended).not.toHaveBeenCalled()
+    expect(event.immediateStopped).toBe(true)
+    // `online` stays untouched: recovery still resumes the sequence on a real transition.
+    const resumed = vi.fn()
+    bootstrap.page.addEventListener('online', resumed)
+    bootstrap.events.dispatch('online')
+    expect(resumed).toHaveBeenCalledOnce()
+  })
+
+  it('keeps ordinary page listeners and event-target bookkeeping working', () => {
+    const bootstrap = bootstrapPage(rewriteMobileIndex(currentIndex(remoteSettingsEntries())))
+    bootstrap.run()
+    const received: string[] = []
+    const listener = (event: { type: string }): void => { received.push(event.type) }
+    bootstrap.page.addEventListener('resize', listener)
+    bootstrap.events.dispatch('resize')
+    bootstrap.page.removeEventListener('resize', listener)
+    bootstrap.events.dispatch('resize')
+    expect(received).toEqual(['resize'])
   })
 
   it.each([
