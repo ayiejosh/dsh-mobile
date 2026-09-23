@@ -2,12 +2,13 @@
 
 Notable changes to DSH Mobile are recorded here. GitHub Releases remain the source for downloadable packages and complete generated commit notes.
 
-## Unreleased
+## 0.4.5 - 2026-09-23
 
-- Accept both absolute and document-relative DSH plugin URLs when probing and assembling the mobile startup batches. This fixes the `502 upstream_unavailable` boot failure after DSH 0.1.7 changed its client URL references; verified against DSH 0.1.7-alpha.2 on the local and remote gateways (thanks @azri57806-design for [#97](https://github.com/saya-ch/dsh-mobile/issues/97)).
-- Align development dependencies and optional peer ranges with DSH 0.1.7-alpha.2, and give `/mobile` guidance its producer-owned message source so it remains valid under the new DSH message types.
-- Guard WebSocket upgrade sockets before asynchronous authentication so a client disconnect during reconnect cannot emit an unhandled socket error (follow-up to [#95](https://github.com/saya-ch/dsh-mobile/issues/95)).
-- Show Retry and Device list actions when Android trusted-connection restoration takes too long, without discarding existing device credentials (thanks @sznyhgm for [#96](https://github.com/saya-ch/dsh-mobile/issues/96)).
+- Support the document-relative plugin URLs introduced in DSH 0.1.7 without weakening the same-origin `/plugins/` check. This fixes mobile boot batches returning `502 upstream_unavailable`; local and remote gateways were verified against DSH 0.1.7-alpha.2 (thanks @azri57806-design for [#97](https://github.com/saya-ch/dsh-mobile/issues/97)).
+- Keep failed revisioned plugin scripts and hashed assets on `no-store` instead of caching their 404 responses as immutable for a year (thanks @abworks-dev for [PR #98](https://github.com/saya-ch/dsh-mobile/pull/98)).
+- Guard WebSocket upgrade sockets before asynchronous authentication so disconnects during reconnect cannot emit an unhandled socket error (follow-up to [#95](https://github.com/saya-ch/dsh-mobile/issues/95)).
+- Give Android connection restoration an exit to Retry or the Device list after a short wait, retaining existing credentials (thanks @sznyhgm for [#96](https://github.com/saya-ch/dsh-mobile/issues/96)).
+- Align development dependencies and optional peer ranges with DSH 0.1.7-alpha.2, and use the producer-owned message source for `/mobile` guidance.
 
 ## 0.4.4 - 2026-09-20
 
