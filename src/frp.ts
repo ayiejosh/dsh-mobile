@@ -1,10 +1,13 @@
 import { spawn, execFile, type ChildProcessWithoutNullStreams } from 'node:child_process'
 import { lstat, rm } from 'node:fs/promises'
+import { request as httpsRequest } from 'node:https'
+import type { ClientRequest, IncomingMessage } from 'node:http'
 import { connect } from 'node:net'
 import { isAbsolute } from 'node:path'
+import { Readable } from 'node:stream'
 import type { MobileAccessControlStore } from './control.js'
-import type { FrpConfigStore } from './frp-config.js'
-import { DEFAULT_VHOST_HTTP_PORT } from './frp-config.js'
+import type { FrpConfigStore, FrpSettings } from './frp-config.js'
+import { isFrpSelfSignedIngress, resolveFrpPublicPort, resolveFrpVhostHttpPort } from './frp-config.js'
 import type { MobileAccessGateway } from './gateway.js'
 import { settleRemoteResources, terminateRemoteProcess, type RemoteProviderController } from './remote.js'
 
@@ -25,18 +28,66 @@ export interface FrpStatus {
   readonly errorCode?: string
 }
 
+/**
+ * Explicit target of the start-up discovery self-check.
+ *
+ * The target is derived from the effective entry, never assumed: the public-CA
+ * entry answers on the saved origin (443 behind Caddy, publicly trusted chain),
+ * while the self-signed entry is a raw TCP passthrough on `publicPort` whose
+ * leaf chains to the plugin's own ingress CA.
+ */
+export interface FrpDiscoveryProbeTarget {
+  /** Absolute HTTPS origin to dial, including the public entry port. */
+  readonly origin: string
+  /**
+   * PEM bundle that anchors the entry leaf in place of the system trust store.
+   * Absent keeps the default chain, which is correct for a publicly trusted
+   * certificate; it is never a way to skip verification.
+   */
+  readonly trustAnchorPem?: string
+}
+
+/** Derived self-check target plus the origin the panel is told about. */
+interface FrpDiscoveryCheck {
+  /** Origin reported once the channel is ready; the saved public origin. */
+  readonly publicOrigin: string
+  /** Absolute origin the probe dials, including the effective entry port. */
+  readonly targetOrigin: string
+  /** Present only for the self-signed entry, where it must be pinned. */
+  readonly trustAnchorPem?: string
+}
+
 /** Inputs for one FRP client process and authenticated DSH gateway. */
 export interface FrpControllerOptions {
   readonly store: MobileAccessControlStore
   readonly executable: string
   readonly config: FrpConfigStore
+  /**
+   * Plugin-wide installation identity (the LAN pairing CA fingerprint).
+   *
+   * Retained for backward compatibility and constructor validation only. It no
+   * longer takes part in the start-up self-check: that check compares against the
+   * identity of the gateway this controller created and advertises, because the
+   * self-signed FRP ingress gateway is pinned to the ingress CA fingerprint by
+   * design, and that value deliberately differs from this one.
+   */
   readonly instanceId: string
-  readonly createGateway: (origin: string) => Promise<MobileAccessGateway>
+  readonly createGateway: (origin: string, settings: FrpSettings) => Promise<MobileAccessGateway>
   readonly onStatus?: (status: FrpStatus) => void
   readonly verifyConfig?: (executable: string, configFile: string) => Promise<void>
   readonly launchClient?: (executable: string, configFile: string) => ChildProcessWithoutNullStreams
   readonly probeVhostExposure?: (serverAddress: string, port: number) => Promise<boolean>
-  readonly probeDiscovery?: (origin: string, expectedInstanceId: string, signal: AbortSignal) => Promise<boolean>
+  readonly probeDiscovery?: (target: FrpDiscoveryProbeTarget, expectedInstanceId: string, signal: AbortSignal) => Promise<boolean>
+  /**
+   * Resolve the CA the self-check must pin for the self-signed entry.
+   *
+   * Only the composing plugin knows where the ingress material lives, so the
+   * trust anchor is injected instead of guessed here. Consulted solely for the
+   * self-signed passthrough; the public-CA entry always keeps the system trust
+   * store. An absent or unreadable anchor leaves the default chain in place, so
+   * the probe keeps retrying instead of failing with a new error code.
+   */
+  readonly resolveDiscoveryTrustAnchor?: (settings: FrpSettings) => Promise<string | undefined>
   readonly startTimeoutMs?: number
   readonly retryIntervalMs?: number
 }
@@ -126,34 +177,122 @@ async function boundedResponseBytes(response: Response): Promise<Uint8Array> {
   return bytes
 }
 
-async function defaultProbeDiscovery(origin: string, expectedInstanceId: string, signal: AbortSignal): Promise<boolean> {
-  const requestController = new AbortController()
-  const abort = (): void => { requestController.abort() }
-  signal.addEventListener('abort', abort, { once: true })
-  const timeout = setTimeout(abort, DISCOVERY_REQUEST_TIMEOUT_MS)
-  timeout.unref()
-  try {
-    const response = await fetch(`${origin}/mobile-access/discovery`, {
-      method: 'GET',
-      redirect: 'error',
-      cache: 'no-store',
-      signal: requestController.signal,
-      headers: { accept: 'application/json' },
-    })
-    if (!response.ok) return false
-    let value: unknown
-    try { value = JSON.parse(new TextDecoder().decode(await boundedResponseBytes(response))) as unknown } catch {
-      throw new Error('frp_discovery_invalid')
+/** Web view over an HTTPS response so the byte cap applies to both paths alike. */
+function discoveryResponse(message: IncomingMessage): Response {
+  const headers = new Headers()
+  const declaredLength = message.headers['content-length']
+  if (declaredLength !== undefined) headers.set('content-length', declaredLength)
+  return new Response(Readable.toWeb(message) as ReadableStream<Uint8Array>, {
+    status: message.statusCode ?? 200,
+    headers,
+  })
+}
+
+/**
+ * Perform one discovery request against the public entry.
+ *
+ * `node:https` carries this request instead of the global `fetch` for a single
+ * reason: only here can the trust anchor be stated. The self-signed entry
+ * presents a leaf the plugin's own ingress CA signed, so the default chain
+ * always fails there (`UNABLE_TO_VERIFY_LEAF_SIGNATURE`) even though the
+ * transport itself is healthy. The anchor is *added* to the trust store — never
+ * `rejectUnauthorized: false` — so the peer must still prove its identity, and
+ * the verified name stays the host of the origin, which is the name the app
+ * dials as well (Node matches IP literals against `IP Address:` SANs).
+ *
+ * A non-2xx answer resolves `undefined` (retry, exactly like `!response.ok`);
+ * transport, TLS, and timeout failures reject so the caller keeps retrying.
+ */
+function requestDiscovery(
+  target: FrpDiscoveryProbeTarget,
+  signal: AbortSignal,
+): Promise<Response | undefined> {
+  if (signal.aborted) return Promise.reject(new Error('frp_discovery_aborted'))
+  const url = new URL(`${target.origin}/mobile-access/discovery`)
+  if (url.protocol !== 'https:' || url.hostname === '') return Promise.reject(new Error('frp_discovery_invalid'))
+  return new Promise<Response | undefined>((resolveRequest, rejectRequest) => {
+    let settled = false
+    let request: ClientRequest | undefined
+    const release = (): void => {
+      clearTimeout(timeout)
+      signal.removeEventListener('abort', onAbort)
     }
-    if (typeof value !== 'object' || value === null || Array.isArray(value)) throw new Error('frp_discovery_invalid')
-    const actual = (value as Record<string, unknown>).instanceId
-    if (typeof actual !== 'string') throw new Error('frp_discovery_invalid')
-    if (actual !== expectedInstanceId) throw new Error('frp_discovery_mismatch')
-    return true
-  } finally {
-    clearTimeout(timeout)
-    signal.removeEventListener('abort', abort)
+    const fail = (error: Error): void => {
+      if (settled) return
+      settled = true
+      release()
+      request?.destroy()
+      rejectRequest(error)
+    }
+    const succeed = (value: Response | undefined): void => {
+      if (settled) return
+      settled = true
+      resolveRequest(value)
+    }
+    const onAbort = (): void => { fail(new Error('frp_discovery_aborted')) }
+    // The request timeout spans the whole exchange, body included: it is released
+    // only once the response socket is done, which is exactly what the aborted
+    // fetch used to do. A timeout after the headers still tears the body read
+    // down, so a stalled body keeps retrying instead of hanging forever.
+    const timeout = setTimeout(() => { fail(new Error('frp_discovery_timeout')) }, DISCOVERY_REQUEST_TIMEOUT_MS)
+    timeout.unref()
+    signal.addEventListener('abort', onAbort, { once: true })
+    request = httpsRequest({
+      host: url.hostname,
+      port: url.port === '' ? 443 : Number(url.port),
+      path: url.pathname,
+      method: 'GET',
+      headers: { accept: 'application/json' },
+      // Adding the anchor keeps certificate verification and the hostname check
+      // switched on; it only widens what counts as a trusted issuer.
+      ...(target.trustAnchorPem === undefined ? {} : { ca: target.trustAnchorPem }),
+      // One fresh connection per attempt: a pooled socket must never let a stale
+      // handshake decide the state of a new generation.
+      agent: false,
+    }, message => {
+      message.once('close', release)
+      const status = message.statusCode ?? 0
+      if (status < 200 || status > 299) {
+        message.resume()
+        succeed(undefined)
+        return
+      }
+      succeed(discoveryResponse(message))
+    })
+    request.once('error', error => {
+      fail(error instanceof Error ? error : new Error('frp_discovery_request_failed'))
+    })
+    request.end()
+  })
+}
+
+/**
+ * Read the public discovery advertisement and compare it with the expected
+ * identity.
+ *
+ * `frp_discovery_invalid` (malformed body) and `frp_discovery_mismatch` (the
+ * entry advertises another identity) stay immediate failures; transport, TLS,
+ * and timeout problems reject so the caller retries until its deadline.
+ */
+export async function defaultProbeDiscovery(
+  target: FrpDiscoveryProbeTarget,
+  expectedInstanceId: string,
+  signal: AbortSignal,
+): Promise<boolean> {
+  const response = await requestDiscovery(target, signal)
+  if (response === undefined) return false
+  // The byte cap and any transport failure surface before parsing: an oversized
+  // body is an invalid advertisement, a broken body read is a retryable fault.
+  const bytes = await boundedResponseBytes(response)
+  let value: unknown
+  try { value = JSON.parse(new TextDecoder().decode(bytes)) as unknown } catch {
+    throw new Error('frp_discovery_invalid')
   }
+  if (typeof value !== 'object' || value === null || Array.isArray(value)) throw new Error('frp_discovery_invalid')
+  const actual = (value as Record<string, unknown>).instanceId
+  if (typeof actual !== 'string') throw new Error('frp_discovery_invalid')
+  if (actual !== expectedInstanceId) throw new Error('frp_discovery_mismatch')
+  return true
 }
 
 /** Owns frpc, its generation-specific configuration, and the remote gateway. */
@@ -267,23 +406,37 @@ export class FrpController implements RemoteProviderController {
       return
     }
     this.publish({ enabled: true, state: 'starting', origin: settings.publicOrigin })
-    let exposed: boolean
-    try {
-      exposed = await (this.options.probeVhostExposure ?? defaultProbeVhostExposure)(
-        settings.serverAddress,
-        DEFAULT_VHOST_HTTP_PORT,
-      )
-    } catch {
-      this.publish({ enabled: true, state: 'error', origin: settings.publicOrigin, errorCode: 'frp_vhost_probe_failed' })
-      return
-    }
-    if (exposed) {
-      this.publish({ enabled: true, state: 'error', origin: settings.publicOrigin, errorCode: 'frp_vhost_publicly_reachable' })
-      return
+    // The plaintext-vhost gate must probe the port the user's frps actually
+    // listens on. Probing the hard-coded upstream 7080 would report "not
+    // exposed" for a reachable vhost on any other port and let a cleartext
+    // session-cookie path through.
+    //
+    // The self-signed entry is a raw TCP passthrough with no vhost at all, so
+    // the probe does not apply: there the equivalent exposure — the public entry
+    // port being reachable — is the design itself, and protection comes from the
+    // gateway's own device pairing and authentication.
+    if (!isFrpSelfSignedIngress(settings)) {
+      let exposed: boolean
+      try {
+        exposed = await (this.options.probeVhostExposure ?? defaultProbeVhostExposure)(
+          settings.serverAddress,
+          resolveFrpVhostHttpPort(settings),
+        )
+      } catch {
+        this.publish({ enabled: true, state: 'error', origin: settings.publicOrigin, errorCode: 'frp_vhost_probe_failed' })
+        return
+      }
+      if (exposed) {
+        this.publish({ enabled: true, state: 'error', origin: settings.publicOrigin, errorCode: 'frp_vhost_publicly_reachable' })
+        return
+      }
     }
     let gateway: MobileAccessGateway
-    try { gateway = await this.options.createGateway(settings.publicOrigin) } catch {
-      this.publish({ enabled: true, state: 'error', origin: settings.publicOrigin, errorCode: 'gateway_start_failed' })
+    try { gateway = await this.options.createGateway(settings.publicOrigin, settings) } catch (error) {
+      // Ingress certificate problems carry their own stable code so the panel can
+      // explain how to re-issue it instead of showing a generic start failure.
+      const code = error instanceof Error && error.message.startsWith('frp_') ? error.message : 'gateway_start_failed'
+      this.publish({ enabled: true, state: 'error', origin: settings.publicOrigin, errorCode: code })
       return
     }
     if (generation !== this.generation || !this.enabled) {
@@ -315,21 +468,73 @@ export class FrpController implements RemoteProviderController {
       if (this.enabled) void this.enqueue(() => this.failGeneration(generation, code === 0 ? 'frp_stopped' : 'frp_exited'))
     })
     this.publish({ enabled: true, state: 'connecting', origin: settings.publicOrigin })
+    // The probe target is derived from the effective entry *before* the abort
+    // controller exists, so reading the ingress anchor can never resurrect it
+    // after a concurrent stop.
+    const check = await this.discoveryCheck(settings)
+    if (generation !== this.generation || !this.enabled) return
     const controller = new AbortController()
     this.startupAbort = controller
-    void this.waitForDiscovery(generation, settings.publicOrigin, controller.signal)
+    // The self-check must compare the public advertisement against the identity
+    // *this* gateway advertises, never the plugin-wide installation identity.
+    // The self-signed ingress gateway is pinned to the ingress CA fingerprint
+    // (`frpIngressGatewayConfig`), which is exactly what the app pins from
+    // `pairingCaFile`, so the plugin identity can never match there and the
+    // channel would only ever end in `frp_start_timeout`. For the public-CA entry
+    // both values are equal, so that path is unchanged. `discoveryCheck` supplies
+    // the other half of the contract: the port that is actually dialled and, for
+    // the self-signed entry, the CA that must anchor the handshake.
+    void this.waitForDiscovery(generation, check, gateway.config.instanceId, controller.signal)
   }
 
-  private async waitForDiscovery(generation: number, origin: string, signal: AbortSignal): Promise<void> {
+  /**
+   * Derive the self-check target and trust anchor for the effective entry.
+   *
+   * The public-CA entry is reached on the saved origin itself: Caddy terminates
+   * TLS on 443 with a publicly trusted certificate, so the probe must keep the
+   * system trust store and the origin URL untouched. The self-signed entry is a
+   * raw TCP passthrough on `publicPort` whose leaf chains to the ingress CA the
+   * app pins from `pairingCaFile`; probing `publicOrigin` there would knock on
+   * 443 — where nothing listens — with a chain the system cannot verify. Both
+   * facts used to be implicit, and together they kept the channel out of `ready`
+   * until `frp_start_timeout`.
+   */
+  private async discoveryCheck(settings: FrpSettings): Promise<FrpDiscoveryCheck> {
+    if (!isFrpSelfSignedIngress(settings)) {
+      return { publicOrigin: settings.publicOrigin, targetOrigin: settings.publicOrigin }
+    }
+    const { hostname } = new URL(settings.publicOrigin)
+    const targetOrigin = `https://${hostname}:${String(resolveFrpPublicPort(settings))}`
+    let trustAnchorPem: string | undefined
+    // An anchor that cannot be read leaves the default chain in place, so the
+    // probe keeps its old retry behaviour instead of introducing a new failure.
+    try { trustAnchorPem = await this.options.resolveDiscoveryTrustAnchor?.(settings) } catch { trustAnchorPem = undefined }
+    return Object.freeze({
+      publicOrigin: settings.publicOrigin,
+      targetOrigin,
+      ...(trustAnchorPem === undefined ? {} : { trustAnchorPem }),
+    })
+  }
+
+  private async waitForDiscovery(
+    generation: number,
+    check: FrpDiscoveryCheck,
+    advertisedInstanceId: string,
+    signal: AbortSignal,
+  ): Promise<void> {
     const deadline = Date.now() + (this.options.startTimeoutMs ?? START_TIMEOUT_MS)
     const probe = this.options.probeDiscovery ?? defaultProbeDiscovery
+    const target: FrpDiscoveryProbeTarget = Object.freeze({
+      origin: check.targetOrigin,
+      ...(check.trustAnchorPem === undefined ? {} : { trustAnchorPem: check.trustAnchorPem }),
+    })
     while (!signal.aborted && Date.now() < deadline) {
       try {
-        if (await probe(origin, this.options.instanceId, signal)) {
+        if (await probe(target, advertisedInstanceId, signal)) {
           await this.enqueue(async () => {
             if (generation !== this.generation || signal.aborted || !this.enabled) return
             this.startupAbort = undefined
-            this.publish({ enabled: true, state: 'ready', origin })
+            this.publish({ enabled: true, state: 'ready', origin: check.publicOrigin })
           })
           return
         }

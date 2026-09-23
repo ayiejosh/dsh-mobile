@@ -1,6 +1,6 @@
 import { randomBytes } from 'node:crypto'
 import { lstat, mkdir, readFile, rename, rm, writeFile } from 'node:fs/promises'
-import { isIP } from 'node:net'
+import { isIP } from './ip.js'
 import { basename, dirname, isAbsolute, join, resolve } from 'node:path'
 import { restrictPrivateFile } from './private-file.js'
 

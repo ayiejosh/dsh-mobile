@@ -13,6 +13,29 @@ export const FRP_CADDY_IMPORT_LINE = `import ${FRP_CADDY_SNIPPET_PATH}`
 /** Directory holding the public-IPv4 certificates installed by certbot. */
 export const FRP_CADDY_IP_CERT_DIR = '/var/lib/caddy/dsh-mobile-certs'
 
+/**
+ * Entry TLS mode for the FRP channel.
+ *
+ * - `public-ip-cert` (default): the VPS Caddy terminates TLS with a public-CA
+ *   certificate and reverse-proxies the plaintext vhost to frps.
+ * - `self-signed`: no Caddy and no public certificate at all. frps publishes a
+ *   raw TCP proxy and the DSH gateway terminates TLS itself with a leaf signed
+ *   by its own pairing CA, which the Android app pins through `ca.cer`.
+ */
+export type FrpEntryTls = 'public-ip-cert' | 'self-signed'
+
+/** Optional overrides for the generated Caddy site; every field defaults to the upstream value. */
+export interface CaddySiteOptions {
+  readonly certDir?: string
+  /**
+   * The user's real `vhostHTTPPort`. `attach` mode must never assume the
+   * upstream 7080: a wrong port silently disables the plaintext-exposure gate.
+   */
+  readonly vhostHttpPort?: number
+  /** `self-signed` is a TCP passthrough and never produces a Caddy site. */
+  readonly entryTls?: FrpEntryTls
+}
+
 function publicIpv4Address(value: string): boolean {
   const parts = value.split('.')
   return parts.length === 4 && parts.every(part => /^(?:0|[1-9][0-9]{0,2})$/u.test(part)
@@ -35,8 +58,33 @@ function parsePublicOrigin(publicOrigin: string): string {
   return url.hostname
 }
 
-/** Build the Caddy site for one public host (without markers or import wiring). */
-export function createCaddySite(publicHost: string, certDir: string = FRP_CADDY_IP_CERT_DIR): string {
+function resolveVhostHttpPort(options: CaddySiteOptions): number {
+  const port = options.vhostHttpPort ?? FRP_VHOST_HTTP_PORT
+  if (!Number.isSafeInteger(port) || port < 1 || port > 65_535) throw new Error('frp_template_input_invalid')
+  return port
+}
+
+/**
+ * A self-signed entry deliberately never reaches Caddy: the tunnel is a raw TCP
+ * passthrough and the DSH gateway is the TLS endpoint. Refuse loudly instead of
+ * emitting a Caddy site that would need the gateway's private CA on the VPS.
+ */
+function rejectSelfSignedCaddySite(options: CaddySiteOptions): void {
+  if (options.entryTls === 'self-signed') throw new Error('frp_entry_tls_invalid')
+}
+
+/**
+ * Build the Caddy site for one public host (without markers or import wiring).
+ *
+ * The second parameter accepts either a bare certificate directory (the legacy
+ * signature) or a full {@link CaddySiteOptions} object, so existing callers keep
+ * working unchanged.
+ */
+export function createCaddySite(publicHost: string, options: CaddySiteOptions | string = {}): string {
+  const resolved: CaddySiteOptions = typeof options === 'string' ? { certDir: options } : options
+  rejectSelfSignedCaddySite(resolved)
+  const certDir = resolved.certDir ?? FRP_CADDY_IP_CERT_DIR
+  const vhostHttpPort = resolveVhostHttpPort(resolved)
   if (publicIpv4Address(publicHost)) {
     return [
       '{',
@@ -49,7 +97,7 @@ export function createCaddySite(publicHost: string, certDir: string = FRP_CADDY_
       '',
       `https://${publicHost} {`,
       `  tls ${certDir}/fullchain.pem ${certDir}/privkey.pem`,
-      `  reverse_proxy 127.0.0.1:${String(FRP_VHOST_HTTP_PORT)}`,
+      `  reverse_proxy 127.0.0.1:${String(vhostHttpPort)}`,
       '}',
       '',
     ].join('\n')
@@ -57,14 +105,14 @@ export function createCaddySite(publicHost: string, certDir: string = FRP_CADDY_
   if (!publicDnsHostname(publicHost)) throw new Error('frp_template_input_invalid')
   return [
     `${publicHost} {`,
-    `  reverse_proxy 127.0.0.1:${String(FRP_VHOST_HTTP_PORT)}`,
+    `  reverse_proxy 127.0.0.1:${String(vhostHttpPort)}`,
     '}',
     '',
   ].join('\n')
 }
 
 /** Manual certbot steps for a public-IPv4 origin (Caddy cannot issue IP certificates itself). */
-function manualIpCertificateGuide(publicHost: string): string {
+export function manualIpCertificateGuide(publicHost: string): string {
   return [
     '# Public-IPv4 manual HTTPS: Caddy cannot issue IP certificates by itself.',
     '# On the VPS (Ubuntu/Debian, port 80 reachable from the internet), run once as root:',
@@ -82,18 +130,32 @@ function manualIpCertificateGuide(publicHost: string): string {
   ].join('\n')
 }
 
-/** Build the only supported frps config and Caddy snippet from validated user inputs. */
-export function createRestrictedFrpServerTemplate(serverPort: number, token: string, publicOrigin: string): string {
+/**
+ * Build the only supported frps config and Caddy snippet from validated user inputs.
+ *
+ * Default `options` reproduce the upstream artefact byte for byte; `attach` mode
+ * passes the user's real vhost port, and `self-signed` is rejected because that
+ * mode publishes a raw TCP proxy instead of an HTTP vhost.
+ */
+export function createRestrictedFrpServerTemplate(
+  serverPort: number,
+  token: string,
+  publicOrigin: string,
+  options: CaddySiteOptions = {},
+): string {
   if (!Number.isSafeInteger(serverPort) || serverPort < 1 || serverPort > 65_535
     || token.length < 16 || token.length > 512 || /[\s\u0000-\u001f\u007f]/u.test(token)) {
     throw new Error('frp_template_input_invalid')
   }
+  rejectSelfSignedCaddySite(options)
+  const vhostHttpPort = resolveVhostHttpPort(options)
+  const certDir = options.certDir ?? FRP_CADDY_IP_CERT_DIR
   const publicHost = parsePublicOrigin(publicOrigin)
   const lines = [
     '# frps.toml — save as /etc/dsh-mobile/frps.toml, then start the frps service.',
     `bindPort = ${String(serverPort)}`,
     'proxyBindAddr = "127.0.0.1"',
-    `vhostHTTPPort = ${String(FRP_VHOST_HTTP_PORT)}`,
+    `vhostHTTPPort = ${String(vhostHttpPort)}`,
     'auth.method = "token"',
     `auth.token = ${JSON.stringify(token)}`,
     '',
@@ -104,7 +166,7 @@ export function createRestrictedFrpServerTemplate(serverPort: number, token: str
     '# finally run: caddy validate --config /etc/caddy/Caddyfile && systemctl reload caddy',
     '# Uninstall later removes only this snippet file and the import line; your own Caddy content is kept.',
     `${FRP_CADDY_SNIPPET_MARKER}`,
-    createCaddySite(publicHost).trimEnd(),
+    createCaddySite(publicHost, { certDir, vhostHttpPort }).trimEnd(),
     '',
   ]
   if (publicIpv4Address(publicHost)) lines.push(manualIpCertificateGuide(publicHost), '')

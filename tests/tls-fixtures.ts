@@ -8,6 +8,12 @@ export interface TestTlsChain {
   readonly leafKey: string
 }
 
+/** Optional extra identities for the leaf; the loopback IP SAN is always present. */
+export interface TestTlsChainOptions {
+  /** Additional `dNSName` SAN entries, for probing a name instead of an address. */
+  readonly dnsNames?: readonly string[]
+}
+
 function lengthBytes(length: number): Buffer {
   if (length < 0x80) return Buffer.from([length])
   const hex = length.toString(16).padStart(Math.ceil(length.toString(16).length / 2) * 2, '0')
@@ -162,7 +168,7 @@ function ecKeyPair(): { publicKey: KeyObject; privateKey: KeyObject } {
 }
 
 /** Generate a root, intermediate, and IP-address server leaf without durable private material. */
-export function createTestTlsChain(): TestTlsChain {
+export function createTestTlsChain(options: TestTlsChainOptions = {}): TestTlsChain {
   const root = ecKeyPair()
   const intermediate = ecKeyPair()
   const leaf = ecKeyPair()
@@ -207,7 +213,10 @@ export function createTestTlsChain(): TestTlsChain {
       extension('2.5.29.19', true, sequence()),
       extension('2.5.29.15', true, bitString(Buffer.from([0x80]), 7)),
       extension('2.5.29.37', false, sequence(objectIdentifier('1.3.6.1.5.5.7.3.1'))),
-      extension('2.5.29.17', false, sequence(der(0x87, Buffer.from([127, 0, 0, 1])))),
+      extension('2.5.29.17', false, sequence(
+        der(0x87, Buffer.from([127, 0, 0, 1])),
+        ...(options.dnsNames ?? []).map(name => der(0x82, Buffer.from(name, 'ascii'))),
+      )),
     ],
   })
   return Object.freeze({

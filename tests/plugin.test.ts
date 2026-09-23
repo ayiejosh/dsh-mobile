@@ -40,6 +40,9 @@ async function invoke(
         port,
         method,
         path,
+        // Keep-alive sockets parked in the global agent hold loopback ports from
+        // the same ephemeral range this fixture probes for the origin listener.
+        agent: false,
         headers: {
           host: authority,
           ...(method === 'POST' ? {
@@ -123,13 +126,51 @@ async function unusedOriginPort(): Promise<number> {
 async function pairOriginBackend(port: number, token: string): Promise<number> {
   const body = JSON.stringify({ token, label: 'Origin plugin test' })
   return new Promise((resolve, reject) => {
-    const request = requestHttp({ host: '127.0.0.1', port, path: '/mobile-access/auth/pair', method: 'POST', headers: {
-      host: 'phone.example.com:8815', origin: 'https://phone.example.com:8815',
-      'sec-fetch-site': 'same-origin', 'content-type': 'application/json', 'content-length': Buffer.byteLength(body),
-    } }, response => { response.resume(); response.once('end', () => { resolve(response.statusCode ?? 0) }) })
+    const request = requestHttp({ host: '127.0.0.1',
+      port,
+      path: '/mobile-access/auth/pair',
+      method: 'POST',
+      // Pairing reuses the origin port, so it must not borrow a pooled socket either.
+      agent: false,
+      headers: {
+        host: 'phone.example.com:8815', origin: 'https://phone.example.com:8815',
+        'sec-fetch-site': 'same-origin', 'content-type': 'application/json', 'content-length': Buffer.byteLength(body),
+      } }, response => { response.resume(); response.once('end', () => { resolve(response.statusCode ?? 0) }) })
     request.once('error', reject)
     request.end(body)
   })
+}
+
+/**
+ * One initial port probe plus up to two re-probes when the operating system
+ * handed the released port to an unrelated loopback socket in the meantime.
+ */
+const ORIGIN_PORT_ATTEMPTS = 3
+
+/**
+ * Configure and start the private origin listener on a freshly probed port.
+ *
+ * `unusedOriginPort` has to release its probe socket before the plugin binds the
+ * same number, so the port can be taken in between. The plugin then reports the
+ * genuine `origin_listen_port_in_use` collision; this fixture re-probes and
+ * retries within a bound instead of failing the run on host port churn. Every
+ * other outcome is returned untouched so the assertions stay authoritative.
+ */
+async function startOriginOnFreePort(route: WebRoute): Promise<{
+  port: number
+  form: { publicOrigin: string; listenPort: number }
+  configured: { status: number; body: string }
+  started: { status: number; body: string }
+}> {
+  for (let attempt = 0; ; attempt += 1) {
+    const port = await unusedOriginPort()
+    const form = { publicOrigin: 'https://phone.example.com:8815', listenPort: port }
+    const configured = await invoke(route, 'POST', '/api/mobile-access/remote/origin/configure', JSON.stringify(form))
+    const started = await invoke(route, 'POST', '/api/mobile-access/remote/control', JSON.stringify({ running: true }))
+    const collided = (JSON.parse(started.body) as { errorCode?: string }).errorCode === 'origin_listen_port_in_use'
+    if (collided && attempt < ORIGIN_PORT_ATTEMPTS - 1) continue
+    return { port, form, configured, started }
+  }
 }
 
 async function managedSetupFile(upstreamOrigin: string): Promise<string> {
@@ -429,16 +470,13 @@ describe('stock DSH lifecycle', () => {
     const lanBefore = JSON.parse((await invoke(mounted.route, 'GET', '/api/mobile-access/lan/control')).body)
     const selected = await invoke(mounted.route, 'POST', '/api/mobile-access/remote/provider', JSON.stringify({ provider: 'origin' }))
     expect(JSON.parse(selected.body)).toMatchObject({ provider: 'origin', running: false, state: 'off' })
-    const port = await unusedOriginPort()
-    const form = { publicOrigin: 'https://phone.example.com:8815', listenPort: port }
-    const configured = await invoke(mounted.route, 'POST', '/api/mobile-access/remote/origin/configure', JSON.stringify(form))
+    const { port, form, configured, started } = await startOriginOnFreePort(mounted.route)
     expect(configured.status).toBe(200)
     const metadata = JSON.parse(configured.body).providers.origin.configuration as { storagePath: string }
     expect(JSON.parse(configured.body)).toMatchObject({ providers: { origin: { configuration: {
       configured: true, publicOrigin: form.publicOrigin, listenHost: '127.0.0.1', listenPort: port,
       allowedCidrs: ['127.0.0.0/8'], backendOrigin: 'http://127.0.0.1:' + String(port),
     } } } })
-    const started = await invoke(mounted.route, 'POST', '/api/mobile-access/remote/control', JSON.stringify({ running: true }))
     expect(JSON.parse(started.body)).toMatchObject({ provider: 'origin', running: true, state: 'ready', origin: form.publicOrigin,
       backendOrigin: 'http://127.0.0.1:' + String(port) })
     const pairing = await invoke(mounted.route, 'POST', '/api/mobile-access/remote/pairing/open', '{}')
@@ -574,5 +612,142 @@ describe('stock DSH lifecycle', () => {
       form: 'notice',
       summary: '/mobile 把手机端改成深色主题',
     })
+  })
+})
+
+describe('attach-mode control routes', () => {
+  it('previews the attach runbook over loopback without installing anything', async () => {
+    const mounted = await mount()
+    const planRequest = await invoke(mounted.route, 'POST', '/api/mobile-access/remote/frp/attach-plan', JSON.stringify({
+      serverAddress: '1.2.3.4',
+      serverPort: 7000,
+      token: '0123456789abcdef0123456789abcdef',
+      publicOrigin: 'https://1.2.3.4',
+      mode: 'attach',
+      entryTls: 'self-signed',
+      publicPort: 33_080,
+    }))
+    expect(planRequest.status).toBe(200)
+    const parsed = JSON.parse(planRequest.body) as { frpAttachPlan: Record<string, unknown>; frpAttachTemplate: string }
+    expect(parsed.frpAttachPlan).toMatchObject({ mode: 'attach', entryTls: 'self-signed', publicPort: 33_080 })
+    expect(parsed.frpAttachPlan.vps as unknown[]).toHaveLength(3)
+    expect(parsed.frpAttachTemplate).toContain('type = "tcp"')
+    expect(parsed.frpAttachTemplate).toContain('remotePort = 33080')
+    expect(parsed.frpAttachTemplate).toContain('ufw allow 33080/tcp')
+    // A preview must not persist anything.
+    const status = await invoke(mounted.route, 'GET', '/api/mobile-access/remote/control')
+    expect(status.body).not.toContain('0123456789abcdef0123456789abcdef')
+  })
+
+  it('reports the documented error codes for attach-mode misconfiguration', async () => {
+    const mounted = await mount()
+    const missingVhost = await invoke(mounted.route, 'POST', '/api/mobile-access/remote/frp/configure', JSON.stringify({
+      serverAddress: '1.2.3.4',
+      serverPort: 7000,
+      token: '0123456789abcdef0123456789abcdef',
+      publicOrigin: 'https://1.2.3.4',
+      mode: 'attach',
+    }))
+    expect(missingVhost.status).toBe(409)
+    expect(missingVhost.body).toContain('frp_attach_mode_requires_vhost_port')
+    const badEntryTls = await invoke(mounted.route, 'POST', '/api/mobile-access/remote/frp/configure', JSON.stringify({
+      serverAddress: '1.2.3.4',
+      serverPort: 7000,
+      token: '0123456789abcdef0123456789abcdef',
+      publicOrigin: 'https://1.2.3.4',
+      mode: 'deploy',
+      entryTls: 'self-signed',
+    }))
+    expect(badEntryTls.status).toBe(409)
+    expect(badEntryTls.body).toContain('frp_entry_tls_invalid')
+  })
+
+  it('exposes the self-signed certificate state and reachability on demand', async () => {
+    const mounted = await mount()
+    const configured = await invoke(mounted.route, 'POST', '/api/mobile-access/remote/frp/configure', JSON.stringify({
+      serverAddress: '127.0.0.1',
+      serverPort: 1,
+      token: '0123456789abcdef0123456789abcdef',
+      publicOrigin: 'https://8.8.8.8',
+      mode: 'attach',
+      entryTls: 'self-signed',
+      publicPort: 33_080,
+    }))
+    expect(configured.status).toBe(200)
+    expect(configured.body).not.toContain('0123456789abcdef0123456789abcdef')
+    const check = await invoke(mounted.route, 'GET', '/api/mobile-access/remote/frp/self-check')
+    expect(check.status).toBe(200)
+    const parsed = JSON.parse(check.body) as { frpSelfCheck: Record<string, unknown> }
+    expect(parsed.frpSelfCheck).toMatchObject({
+      mode: 'attach',
+      entryTls: 'self-signed',
+      publicPort: 33_080,
+      // Nothing is listening and the certificate does not exist until the channel
+      // starts: both facts are reported instead of throwing.
+      frpsReachable: false,
+      entryReachable: false,
+      inbound: { listenHost: '127.0.0.1', allowedCidrs: ['127.0.0.0/8'] },
+    })
+    expect((parsed.frpSelfCheck.certificate as Record<string, unknown>).state).toBe('unknown')
+    // Never leak the token, key material, or private paths through the self-check.
+    expect(check.body).not.toContain('0123456789abcdef0123456789abcdef')
+    expect(check.body).not.toContain('ca-key.pem')
+  })
+
+  it('keeps the managed deploy routes untouched for the default mode', async () => {
+    const mounted = await mount()
+    const configured = await invoke(mounted.route, 'POST', '/api/mobile-access/remote/frp/configure', JSON.stringify({
+      serverAddress: 'frp.example.com',
+      serverPort: 7000,
+      token: '0123456789abcdef0123456789abcdef',
+      publicOrigin: 'https://dsh.example.com',
+    }))
+    expect(configured.status).toBe(200)
+    const parsed = JSON.parse(configured.body) as { providers: { frp: { configuration: Record<string, unknown> } } }
+    // A legacy configuration must not gain the new keys in the status payload.
+    expect(parsed.providers.frp.configuration).toMatchObject({
+      configured: true,
+      vhostHttpPort: 7080,
+    })
+    expect(parsed.providers.frp.configuration).not.toHaveProperty('mode')
+    expect(parsed.providers.frp.configuration).not.toHaveProperty('entryTls')
+    expect(parsed.providers.frp.configuration).not.toHaveProperty('publicPort')
+  })
+
+  it('masks the token in the attach preview and reveals it only on an explicit request', async () => {
+    const mounted = await mount()
+    const token = '0123456789abcdef0123456789abcdef'
+    const request = {
+      serverAddress: '1.2.3.4',
+      serverPort: 7000,
+      token,
+      publicOrigin: 'https://1.2.3.4',
+      mode: 'attach',
+      entryTls: 'self-signed',
+      publicPort: 33_080,
+    }
+    const masked = await invoke(mounted.route, 'POST', '/api/mobile-access/remote/frp/attach-plan', JSON.stringify(request))
+    expect(masked.status).toBe(200)
+    const maskedParsed = JSON.parse(masked.body) as {
+      frpAttachPlan: { local: { frpcToml: string; tokenMasked: boolean } }
+      frpAttachTemplate: string
+    }
+    // The default preview is masked in both artefacts the panel can copy.
+    expect(maskedParsed.frpAttachPlan.local.frpcToml).toContain('auth.token = "***"')
+    expect(maskedParsed.frpAttachPlan.local.tokenMasked).toBe(true)
+    expect(maskedParsed.frpAttachTemplate).not.toContain(token)
+    expect(masked.body).not.toContain(token)
+    // The panel's dedicated reveal action is the only caller that gets the plaintext.
+    const revealed = await invoke(mounted.route, 'POST', '/api/mobile-access/remote/frp/attach-plan',
+      JSON.stringify({ ...request, revealToken: true }))
+    expect(revealed.status).toBe(200)
+    const revealedParsed = JSON.parse(revealed.body) as {
+      frpAttachPlan: { local: { frpcToml: string; tokenMasked: boolean } }
+    }
+    expect(revealedParsed.frpAttachPlan.local.frpcToml).toContain(`auth.token = "${token}"`)
+    expect(revealedParsed.frpAttachPlan.local.tokenMasked).toBe(false)
+    // Neither preview persists anything: the control snapshot never carries the token.
+    const status = await invoke(mounted.route, 'GET', '/api/mobile-access/remote/control')
+    expect(status.body).not.toContain(token)
   })
 })

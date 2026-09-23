@@ -53,8 +53,20 @@ import {
   type CloudflaredTunnelStatus,
 } from './cloudflared-tunnel.js'
 import { FrpComponentManager, type FrpComponentStatus } from './frp-component.js'
-import { FrpConfigStore, mergeSavedFrpSettings, mergeSavedFrpTarget, type FrpConfigurationStatus } from './frp-config.js'
+import {
+  FrpConfigStore,
+  isFrpSelfSignedIngress,
+  mergeSavedFrpSettings,
+  mergeSavedFrpTarget,
+  resolveFrpPublicPort,
+  resolveFrpVhostHttpPort,
+  type FrpConfigurationStatus,
+  type FrpSettings,
+} from './frp-config.js'
+import { createFrpAttachTemplate } from './frp-attach.js'
+import { createFrpAttachPlan } from './frp-attach-plan.js'
 import { FrpController } from './frp.js'
+import { ensureFrpIngressCertificate, frpIngressPaths, frpIngressSelfCheck, type FrpIngressCertificate } from './frp-ingress.js'
 import { OriginConfigStore, parseOriginSettings, validateOriginListenPort, type OriginConfigurationStatus, type OriginSettings } from './origin-proxy-config.js'
 import { OriginController } from './origin-proxy.js'
 import { PluginReleaseManager, releaseProfileDirectory } from './release-update.js'
@@ -68,7 +80,7 @@ import {
   type RemoteProviderController,
   type RemoteProviderStatus,
 } from './remote.js'
-import { parseAuthority, parseCidr } from './network.js'
+import { parseAuthority, parseCidr, probeTcpReachable } from './network.js'
 import {
   availableLanNetworks,
   isNetworkSelectionError,
@@ -164,6 +176,12 @@ function mapAdminError(error: unknown): HttpError {
     'frp_public_origin_invalid',
     'frp_settings_invalid',
   ].includes(error.message)) return new HttpError(400, error.message)
+  // Attach-mode codes are environment/precondition conflicts by design:
+  // `frp_attach_mode_requires_vhost_port` (the user's frps port is unknown),
+  // `frp_attach_cert_unknown` (the ingress certificate is missing or unusable),
+  // and `frp_entry_tls_invalid` (the requested entry mode cannot be provisioned)
+  // all map to 409 here, while a reachable plaintext vhost keeps the upstream
+  // `frp_vhost_publicly_reachable` / `frp_vhost_probe_failed` codes.
   if (error instanceof Error && error.message.startsWith('frp_')) {
     return new HttpError(409, error.message)
   }
@@ -307,6 +325,62 @@ export function remoteGatewayConfig(
     publicTls: true,
     discovery: false,
   })
+}
+
+/**
+ * Gateway config for the self-signed FRP ingress.
+ *
+ * Unlike {@link remoteGatewayConfig}, the gateway itself is the TLS endpoint:
+ * frps only forwards raw TCP, so the listener speaks HTTPS with the leaf that
+ * `pairingCaFile` signed, and the pairing CA is deliberately retained so the
+ * gateway can serve `GET /mobile-access/ca.cer` for the app to pin. The listener
+ * stays on loopback because the public entry is the frps TCP proxy, never a
+ * direct bind.
+ */
+export function frpIngressGatewayConfig(
+  template: ResolvedGatewayConfig,
+  settings: FrpSettings,
+  stateFile: string,
+  ingress: Pick<FrpIngressCertificate, 'paths' | 'caFingerprint'>,
+  listenPort = 0,
+): ResolvedGatewayConfig {
+  if (!isFrpSelfSignedIngress(settings)) throw new Error('frp_entry_tls_invalid')
+  const publicHost = new URL(settings.publicOrigin).hostname
+  const publicAuthority = `${publicHost}:${String(resolveFrpPublicPort(settings))}`
+  const { pairingCaFile: _templateCaFile, ...shared } = template
+  return Object.freeze({
+    ...shared,
+    listenHost: '127.0.0.1',
+    listenPort,
+    authorities: Object.freeze([parseAuthority(publicAuthority)]),
+    // Only frpc originates the connection, from the same computer.
+    allowedCidrs: Object.freeze([parseCidr('127.0.0.0/8')]),
+    stateFile,
+    // The app validates `instance` against the CA it pins (gateway.ts checks the
+    // same fingerprint), so this channel must use the CA fingerprint, not the
+    // plugin-wide installation id.
+    instanceId: ingress.caFingerprint,
+    pairingCaFile: ingress.paths.caCertFile,
+    tls: Object.freeze({ mode: 'provided', certFile: ingress.paths.certFile, keyFile: ingress.paths.keyFile }),
+    publicTls: true,
+    discovery: false,
+  })
+}
+
+/**
+ * CA the FRP start-up self-check must pin, read from the ingress directory.
+ *
+ * The self-signed entry presents a leaf signed by this CA, which is absent from
+ * the system trust store, so the probe must anchor it exactly as the app does
+ * when it pins `pairingCaFile`. The public-CA entry answers with a publicly
+ * trusted certificate and therefore returns `undefined` (system trust store).
+ * An unreadable CA is also `undefined` on purpose: the probe then keeps its
+ * default chain and its existing retry/timeout behaviour instead of failing with
+ * a new error code.
+ */
+export async function readFrpIngressTrustAnchor(settings: FrpSettings, stateFile: string): Promise<string | undefined> {
+  if (!isFrpSelfSignedIngress(settings)) return undefined
+  try { return await readFile(frpIngressPaths(stateFile).caCertFile, 'utf8') } catch { return undefined }
 }
 
 /** Reuse remote HTTPS policy while binding a separately validated private HTTP origin. */
@@ -550,6 +624,32 @@ export async function apply(ctx: Context, config: PluginConfig): Promise<void> {
       await candidate.start()
       return candidate
   }
+  /**
+   * Gateway factory for the FRP provider.
+   *
+   * The public-CA entry keeps the ordinary Caddy-fronted remote gateway. The
+   * self-signed entry terminates TLS inside the gateway, so it first materializes
+   * a leaf the pairing CA signed for the public IPv4 and then binds the ingress
+   * configuration that keeps that CA pinned.
+   */
+  const createFrpGateway = async (publicOrigin: string, settings: FrpSettings): Promise<MobileAccessGateway> => {
+    if (!isFrpSelfSignedIngress(settings)) return createRemoteGateway(publicOrigin)
+    const ingress = await ensureFrpIngressCertificate(settings, remoteDeviceFile)
+    const resolved = frpIngressGatewayConfig(template, settings, remoteDeviceFile, ingress)
+    const candidate = new MobileAccessGateway(
+      resolved,
+      new JsonDeviceStore(resolved.stateFile, resolved.maxDevices),
+      mobileAccess,
+      upstreamLoginUrl,
+      webSocketPaths,
+      blockedUpgradePaths,
+    )
+    try { await candidate.start() } catch (error) {
+      await candidate.close()
+      throw error
+    }
+    return candidate
+  }
   const createOriginGateway = async (settings: OriginSettings): Promise<MobileAccessGateway> => {
     const resolved = originGatewayConfig(template, settings, remoteDeviceFile, instanceId)
     const candidate = new MobileAccessGateway(
@@ -592,7 +692,14 @@ export async function apply(ctx: Context, config: PluginConfig): Promise<void> {
       executable: frpComponent.executable,
       config: frpConfig,
       instanceId,
-      createGateway: createRemoteGateway,
+      createGateway: createFrpGateway,
+      /**
+       * Hand the start-up self-check the CA the app itself pins.
+       *
+       * Only this module knows where the ingress material lives, so the anchor is
+       * read here from the ingress directory instead of being guessed downstream.
+       */
+      resolveDiscoveryTrustAnchor: settings => readFrpIngressTrustAnchor(settings, remoteDeviceFile),
     }),
     origin: new OriginController({ store: originStore, config: originConfig, createGateway: createOriginGateway }),
   }
@@ -867,6 +974,49 @@ export async function apply(ctx: Context, config: PluginConfig): Promise<void> {
             if (remoteControllers.frp.status().enabled) await remoteControllers.frp.reconnect()
           })
           sendJson(response, 200, remotePayload(), false)
+          return
+        }
+        if (request.method === 'POST' && target.decodedPathname === `${LOCAL_ADMIN_PREFIX}/remote/frp/attach-plan`) {
+          const body = await readJsonObject(request, 8192)
+          // Read-only preview: blank fields keep their saved values, and nothing
+          // on the VPS or the local filesystem is touched.
+          const settings = mergeSavedFrpSettings(body, frpConfig.settings())
+          // Previews are masked by default. Only the panel's explicit "copy the
+          // frpc.toml with its token" action sets revealToken, and the revealed
+          // text is copied by the caller instead of being stored anywhere.
+          const options = { configFile: frpConfig.runtimeConfigFile, revealToken: body.revealToken === true }
+          logger.info('frp attach plan requested mode=%s entryTls=%s vhostHttpPort=%d',
+            settings.mode ?? 'deploy', settings.entryTls ?? 'public-ip-cert', resolveFrpVhostHttpPort(settings))
+          sendJson(response, 200, {
+            ...remotePayload(),
+            frpAttachPlan: createFrpAttachPlan(settings, options),
+            frpAttachTemplate: createFrpAttachTemplate(settings, options),
+          }, false)
+          return
+        }
+        if (request.method === 'GET' && target.decodedPathname === `${LOCAL_ADMIN_PREFIX}/remote/frp/self-check`) {
+          const settings = frpConfig.settings()
+          if (settings === undefined) throw new HttpError(409, 'frp_config_missing')
+          const check = await frpIngressSelfCheck(settings, remoteDeviceFile)
+          // Two independent facts: the control port proves the user's frps is up,
+          // and the entry port proves the tunnel actually forwards to this
+          // computer. Both are advisory and never gate a security decision.
+          const [frpsReachable, entryReachable] = await Promise.all([
+            probeTcpReachable(settings.serverAddress, settings.serverPort),
+            probeTcpReachable(settings.serverAddress, resolveFrpPublicPort(settings)),
+          ])
+          sendJson(response, 200, {
+            ...remotePayload(),
+            frpSelfCheck: {
+              ...check,
+              // Only stable booleans and the CA fingerprint leave this route: no
+              // token, no key material, and no private file paths.
+              frpsReachable,
+              entryReachable,
+              frpc: remoteController().status(),
+              component: frpComponent.status(),
+            },
+          }, false)
           return
         }
         if (request.method === 'GET' && target.decodedPathname === `${LOCAL_ADMIN_PREFIX}/remote/websocket-paths`) {

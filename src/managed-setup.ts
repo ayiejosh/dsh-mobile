@@ -285,18 +285,58 @@ export async function ensureManagedCa(
   return assertMatchingCa(certPem, keyPem)
 }
 
-/** Sign and atomically install a server leaf for the interface's current address. */
-export async function refreshManagedServerCertificate(setup: ManagedSetup, address: string): Promise<void> {
-  await Promise.all([restrictPrivateFile(setup.tls.caCertFile), restrictPrivateFile(setup.tls.caKeyFile)])
+/** One host a server leaf must be valid for: an IP literal, a DNS name, or both. */
+export interface ServerCertificateTarget {
+  readonly commonName: string
+  readonly ipAddresses?: readonly string[]
+  readonly dnsNames?: readonly string[]
+}
+
+/** Where a freshly signed server leaf is installed. */
+export interface ServerCertificateFiles {
+  readonly certFile: string
+  readonly keyFile: string
+}
+
+/** CA material a leaf is signed with. */
+export interface ServerCertificateAuthority {
+  readonly caCertFile: string
+  readonly caKeyFile: string
+}
+
+function subjectAltNames(target: ServerCertificateTarget): { type: 2 | 7; value?: string; ip?: string }[] {
+  const names: { type: 2 | 7; value?: string; ip?: string }[] = []
+  for (const ip of target.ipAddresses ?? []) names.push({ type: 7, ip })
+  for (const dns of target.dnsNames ?? []) names.push({ type: 2, value: dns })
+  if (names.length === 0) throw new Error('managed TLS leaf needs at least one server name')
+  return names
+}
+
+/**
+ * Sign one server leaf with an existing self-signed CA and install it privately.
+ *
+ * Both the LAN listener and the self-signed FRP ingress use this one path, so a
+ * certificate can never be produced by two divergent code paths. IP entries are
+ * required for console addresses (`type: 7`), DNS entries (`type: 2`) cover named
+ * hosts; the Android client accepts either through its pinned CA.
+ */
+export async function issueServerCertificate(
+  authority: ServerCertificateAuthority,
+  target: ServerCertificateTarget,
+  output: ServerCertificateFiles,
+  lifetimeDays = 397,
+): Promise<void> {
+  const altNames = subjectAltNames(target)
+  await Promise.all([restrictPrivateFile(authority.caCertFile), restrictPrivateFile(authority.caKeyFile)])
   const [caCert, caKey] = await Promise.all([
-    readFile(setup.tls.caCertFile, 'utf8'),
-    readFile(setup.tls.caKeyFile, 'utf8'),
+    readFile(authority.caCertFile, 'utf8'),
+    readFile(authority.caKeyFile, 'utf8'),
   ])
   assertMatchingCa(caCert, caKey)
   const now = new Date()
   const notAfter = new Date(now)
-  notAfter.setDate(notAfter.getDate() + 397)
-  const server = await generate([{ name: 'commonName', value: 'DeepSeek Harness Mobile' }], {
+  notAfter.setDate(notAfter.getDate() + lifetimeDays)
+  const server = await generate([{ name: 'commonName', value: target.commonName }], {
     keyType: 'ec',
     curve: 'P-256',
     algorithm: 'sha256',
@@ -307,13 +347,22 @@ export async function refreshManagedServerCertificate(setup: ManagedSetup, addre
       { name: 'basicConstraints', cA: false, critical: true },
       { name: 'keyUsage', digitalSignature: true, critical: true },
       { name: 'extKeyUsage', serverAuth: true },
-      { name: 'subjectAltName', altNames: [{ type: 7, ip: address }] },
+      { name: 'subjectAltName', altNames },
     ],
   })
   await Promise.all([
-    atomicWrite(setup.tls.certFile, server.cert),
-    atomicWrite(setup.tls.keyFile, server.private),
+    atomicWrite(output.certFile, server.cert),
+    atomicWrite(output.keyFile, server.private),
   ])
+}
+
+/** Sign and atomically install a server leaf for the interface's current address. */
+export async function refreshManagedServerCertificate(setup: ManagedSetup, address: string): Promise<void> {
+  await issueServerCertificate(
+    { caCertFile: setup.tls.caCertFile, caKeyFile: setup.tls.caKeyFile },
+    { commonName: 'DeepSeek Harness Mobile', ipAddresses: [address] },
+    { certFile: setup.tls.certFile, keyFile: setup.tls.keyFile },
+  )
 }
 
 /** Resolve the saved interface to the ordinary gateway config consumed by the Host plugin. */

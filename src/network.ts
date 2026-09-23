@@ -1,4 +1,5 @@
-import { isIP } from 'node:net'
+import { connect } from 'node:net'
+import { isIP } from './ip.js'
 
 /** A parsed IP network used to authorize directly connected clients. */
 export interface ParsedCidr {
@@ -276,4 +277,31 @@ export class RequestTrustPolicy {
     }
     return normalized
   }
+}
+
+/**
+ * Open a plain TCP connection only to learn whether something is listening.
+ *
+ * Used by the on-demand self-check so the panel can tell "frps is up" from
+ * "frps is not listening". A transparent proxy can acknowledge any connect, so
+ * this result is advisory and never authorises a security decision on its own.
+ */
+export async function probeTcpReachable(host: string, port: number, timeoutMs = 1_500): Promise<boolean> {
+  if (!Number.isSafeInteger(port) || port < 1 || port > 65_535) return false
+  return new Promise<boolean>((resolveProbe) => {
+    let finished = false
+    const socket = connect({ host, port })
+    const finish = (reachable: boolean): void => {
+      if (finished) return
+      finished = true
+      clearTimeout(timer)
+      socket.destroy()
+      resolveProbe(reachable)
+    }
+    const timer = setTimeout(() => { finish(false) }, timeoutMs)
+    timer.unref()
+    socket.once('connect', () => { finish(true) })
+    socket.once('error', () => { finish(false) })
+    socket.once('close', () => { finish(false) })
+  })
 }

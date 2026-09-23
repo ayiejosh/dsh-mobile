@@ -8,6 +8,8 @@ import {
   combineClientSignals,
   CONTROL_STYLES,
   createFrpServerTemplateForClipboard,
+  createFrpAttachTemplateForClipboard,
+  frpAttachFormErrorCode,
   clientReleaseInfo,
   diagnosticEntriesForRender,
   diagnosticOverallForChecks,
@@ -389,6 +391,65 @@ describe('mobile-control localization', () => {
     expect(template).toContain('reverse_proxy 127.0.0.1:7080')
     expect(() => createFrpServerTemplateForClipboard(7000, 'short', 'https://dsh.example.com')).toThrow()
     expect(() => createFrpServerTemplateForClipboard(7000, '0'.repeat(32), 'http://dsh.example.com')).toThrow()
+  })
+
+  it('builds attach runbooks in the loopback client and wires the new panel controls', () => {
+    const selfSigned = createFrpAttachTemplateForClipboard({
+      serverAddress: '1.2.3.4',
+      serverPort: 7000,
+      token: '0123456789abcdef0123456789abcdef',
+      publicOrigin: 'https://1.2.3.4',
+      entryTls: 'self-signed',
+      publicPort: 33_080,
+    })
+    // The token is part of the local half by design; the VPS half never installs frps.
+    expect(selfSigned).toContain('type = "tcp"')
+    expect(selfSigned).toContain('remotePort = 33080')
+    expect(selfSigned).toContain('ufw allow 33080/tcp')
+    expect(selfSigned.split('---- (a)')[1]!.split('---- (b)')[0]).not.toContain('auth.token')
+    const http = createFrpAttachTemplateForClipboard({
+      serverAddress: '1.2.3.4',
+      serverPort: 7000,
+      token: '0123456789abcdef0123456789abcdef',
+      publicOrigin: 'https://1.2.3.4',
+      entryTls: 'public-ip-cert',
+      vhostHttpPort: 8080,
+    })
+    expect(http).toContain('reverse_proxy 127.0.0.1:8080')
+    // Attach without the user's real vhost port must report the host's own code.
+    expect(frpAttachFormErrorCode({
+      serverAddress: '1.2.3.4',
+      serverPort: 7000,
+      token: '0123456789abcdef0123456789abcdef',
+      publicOrigin: 'https://1.2.3.4',
+      entryTls: 'public-ip-cert',
+    })).toBe('frp_attach_mode_requires_vhost_port')
+    expect(frpAttachFormErrorCode({
+      serverAddress: '1.2.3.4',
+      serverPort: 7000,
+      token: '0123456789abcdef0123456789abcdef',
+      publicOrigin: 'https://1.2.3.4',
+      entryTls: 'self-signed',
+    })).toBeUndefined()
+
+    const source = readFileSync(new URL('../src/client.ts', import.meta.url), 'utf8')
+    expect(source).toContain("t('frpModeAttach')")
+    expect(source).toContain("t('frpEntryTlsSelfSigned')")
+    expect(source).toContain("t('frpPublicPortHint')")
+    expect(source).toContain("t('frpAttachPlanCopied')")
+    expect(source).toContain("t('frpAttachSelfCheck')")
+    expect(source).toContain('/api/mobile-access/remote/frp/attach-plan')
+    expect(source).toContain('/api/mobile-access/remote/frp/self-check')
+    // The two error-code tables plus the panel's local attach-validation table
+    // must all translate the three new codes.
+    expect(source.match(/frp_attach_mode_requires_vhost_port: 'frpAttachModeRequiresVhostPort'/gu)).toHaveLength(3)
+    expect(source.match(/frp_attach_cert_unknown: 'frpAttachCertUnknownError'/gu)).toHaveLength(3)
+    expect(source.match(/frp_entry_tls_invalid: 'frpEntryTlsInvalid'/gu)).toHaveLength(3)
+    expect(CONTROL_STYLES).toContain('.dsh-mobile-control__frp-hint')
+    expect(CONTROL_STYLES).toContain('.dsh-mobile-control__frp-fields select')
+    const routes = readFileSync(new URL('../src/plugin.ts', import.meta.url), 'utf8')
+    expect(routes).toContain('/remote/frp/attach-plan')
+    expect(routes).toContain('/remote/frp/self-check')
   })
 
   it('manages admin-approved third-party WebSocket paths from the loopback panel', () => {

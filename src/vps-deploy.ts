@@ -1,7 +1,7 @@
 import { createHash, randomBytes } from 'node:crypto'
 import { spawn } from 'node:child_process'
 import { lstat, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises'
-import { isIP } from 'node:net'
+import { isIP } from './ip.js'
 import { tmpdir } from 'node:os'
 import { isAbsolute, join, resolve } from 'node:path'
 import { validateFrpPublicOrigin, validateFrpServerAddress, validateFrpServerPort, validateFrpToken, type FrpSettings } from './frp-config.js'

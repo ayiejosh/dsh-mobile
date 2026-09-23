@@ -80,6 +80,26 @@
       "name": "reject ambiguous trailing dot",
       "input": "https://dsh.local./",
       "expected": null
+    },
+    {
+      "name": "public IPv4 with an explicit non-default entry port",
+      "input": "https://8.8.8.8:33080",
+      "expected": "https://8.8.8.8:33080"
+    },
+    {
+      "name": "trim, uppercase scheme, and public IPv4 entry port",
+      "input": "  HTTPS://8.8.8.8:33080/  ",
+      "expected": "https://8.8.8.8:33080"
+    },
+    {
+      "name": "public IPv4 default port is canonicalized away",
+      "input": "https://8.8.8.8:443/",
+      "expected": "https://8.8.8.8"
+    },
+    {
+      "name": "IPv4 literal with an out-of-range octet is rejected",
+      "input": "https://999.1.1.1",
+      "expected": null
     }
   ],
   "connections": [
@@ -126,6 +146,22 @@
       "name": "malformed pair fragment is rejected",
       "input": "https://dsh.local:3443/mobile-access/pair#instance=short&token=aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
       "expected": null
+    },
+    {
+      "name": "public IPv4 origin with the tunnel entry port",
+      "input": "https://8.8.8.8:33080",
+      "expected": {
+        "origin": "https://8.8.8.8:33080",
+        "initialURL": "https://8.8.8.8:33080"
+      }
+    },
+    {
+      "name": "fingerprint-bound pair link over a self-signed entry port",
+      "input": "https://8.8.8.8:33080/mobile-access/pair#instance=bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb&token=aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "expected": {
+        "origin": "https://8.8.8.8:33080",
+        "initialURL": "https://8.8.8.8:33080/mobile-access/pair#instance=bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb&token=aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+      }
     }
   ],
   "sameOrigin": [
@@ -256,6 +292,56 @@
       "base": "https://dsh.local:3443",
       "candidate": "http://dsh.local:3443/api/files/abc",
       "expected": false
+    }
+  ],
+  "remoteHost": [
+    {
+      "name": "public IPv4 is a remote candidate",
+      "host": "8.8.8.8",
+      "allowedRemote": true,
+      "allowedLan": false
+    },
+    {
+      "name": "private IPv4 stays local-network only",
+      "host": "192.168.1.10",
+      "allowedRemote": false,
+      "allowedLan": true
+    },
+    {
+      "name": "loopback is never a remote entry",
+      "host": "127.0.0.1",
+      "allowedRemote": false,
+      "allowedLan": true
+    },
+    {
+      "name": "documentation TEST-NET-3 is never a remote entry",
+      "host": "203.0.113.10",
+      "allowedRemote": false,
+      "allowedLan": true
+    },
+    {
+      "name": "CGNAT shared space is never a remote entry",
+      "host": "100.64.0.8",
+      "allowedRemote": false,
+      "allowedLan": true
+    },
+    {
+      "name": "user-owned domain is a remote candidate",
+      "host": "dsh.example.com",
+      "allowedRemote": true,
+      "allowedLan": false
+    },
+    {
+      "name": "mDNS name stays local-network only",
+      "host": "computer.local",
+      "allowedRemote": false,
+      "allowedLan": true
+    },
+    {
+      "name": "IPv4 literal with an out-of-range octet is never a remote entry",
+      "host": "999.1.1.1",
+      "allowedRemote": false,
+      "allowedLan": true
     }
   ]
 }

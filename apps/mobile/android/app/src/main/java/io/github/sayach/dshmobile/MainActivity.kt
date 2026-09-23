@@ -1313,11 +1313,14 @@ class MainActivity : Activity() {
                 return@execute
             }
             if (generation != pairingGeneration) return@execute
-            val trust: Pair<ByteArray?, String?>? = if (mode == AccessMode.REMOTE) {
-                null to key.instanceId
-            } else {
-                val rawCa = runCatching { NativeAuthClient.fetchPairingCa(origin) }.getOrNull()
-                rawCa?.let { ca -> PairingTrust.validateCertificate(ca, key.instanceId)?.let { it to key.instanceId } }
+            // A LAN gateway always serves its pairing CA. A remote gateway serves one only for the
+            // self-signed passthrough entry, whose CA is the very fingerprint the pairing key
+            // carries; a publicly trusted entry answers 404 and keeps the platform trust store,
+            // exactly as before. Anything served that is not the promised CA fails closed.
+            // The pinned CA also reaches the WebView, the download client and the persisted
+            // credential, so restore, renewal and probing keep the very same anchor.
+            val trust = PairingTrust.selectTrustAnchor(mode, key.instanceId) {
+                runCatching { NativeAuthClient.fetchPairingCa(origin) }.getOrNull()
             }
             if (trust == null) {
                 runOnUiThread {

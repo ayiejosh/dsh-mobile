@@ -2,7 +2,7 @@ import { dirname, isAbsolute, join, resolve } from 'node:path'
 import { createHash } from 'node:crypto'
 import { fileURLToPath } from 'node:url'
 import z from '@deepseek-ai/schemastery'
-import { isIP } from 'node:net'
+import { isIP } from './ip.js'
 import { isLoopbackAddress, parseAuthority, parseCidr, type AuthoritySpec, type ParsedCidr } from './network.js'
 
 /** TLS source accepted by the LAN listener. */

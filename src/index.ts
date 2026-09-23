@@ -92,17 +92,47 @@ export type { BlockedUpgradePathEntry } from './websocket-paths.js'
 export type { FrpComponentStatus } from './frp-component.js'
 export {
   DEFAULT_VHOST_HTTP_PORT,
+  FRP_DEFAULT_PUBLIC_PORT,
+  FRP_RESERVED_PORTS,
   FrpConfigStore,
   createFrpServerTemplate,
   createFrpcToml,
+  isFrpSelfSignedIngress,
   mergeSavedFrpSettings,
   mergeSavedFrpTarget,
   parseFrpSettings,
+  resolveFrpEntryTls,
+  resolveFrpMode,
+  resolveFrpPublicPort,
+  resolveFrpVhostHttpPort,
+  validateFrpEntryTls,
+  validateFrpMode,
   validateFrpPublicOrigin,
+  validateFrpPublicPort,
   validateFrpServerAddress,
   validateFrpServerPort,
   validateFrpToken,
+  validateFrpVhostHttpPort,
 } from './frp-config.js'
+export {
+  FRP_ATTACH_DISCOVERY_PATH,
+  FRP_ATTACH_LOCAL_DECLARATION,
+  FRP_ATTACH_SELF_SIGNED_DECLARATION,
+  FRP_ATTACH_VPS_DECLARATION,
+  createFrpAttachTemplate,
+  createFrpAttachTemplateParts,
+  frpAttachVpsParts,
+  validateAttachSettings,
+} from './frp-attach.js'
+export { createFrpAttachPlan } from './frp-attach-plan.js'
+export type { FrpAttachOptions, FrpAttachTemplate, FrpAttachVpsParts } from './frp-attach.js'
+export type { FrpAttachPlan, FrpAttachPlanLocal, FrpAttachPlanStep, FrpAttachStepId } from './frp-attach-plan.js'
+export { CERT_EXPIRING_DAYS, evaluateCertificateLifetime, probeOriginCertificate, readCertificateRenewal } from './cert-renewal.js'
+export type { CertRenewalStatus } from './cert-renewal.js'
+export { ensureFrpIngressCertificate, frpIngressPaths, frpIngressSelfCheck } from './frp-ingress.js'
+export type { FrpIngressCertificate, FrpIngressPaths, FrpIngressSelfCheck } from './frp-ingress.js'
+export { issueServerCertificate } from './managed-setup.js'
+export type { ServerCertificateAuthority, ServerCertificateFiles, ServerCertificateTarget } from './managed-setup.js'
 export {
   FRP_CADDY_IMPORT_LINE,
   FRP_CADDY_SNIPPET_MARKER,
@@ -111,6 +141,7 @@ export {
   createRestrictedFrpServerTemplate,
   FRP_VHOST_HTTP_PORT,
 } from './frp-template.js'
+export type { CaddySiteOptions, FrpEntryTls } from './frp-template.js'
 export type { FrpConfigurationStatus, FrpSettings } from './frp-config.js'
 export { FrpController } from './frp.js'
 export type { FrpControllerOptions, FrpState, FrpStatus } from './frp.js'

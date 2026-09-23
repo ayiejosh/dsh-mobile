@@ -185,10 +185,7 @@ internal class PairedDeviceStore(context: Context) {
             && TOKEN.matches(row.deviceToken)
             && RemoteHostPolicy.isAllowed(row.mode, row.origin.host)
             && row.expiresAt > 0L
-            && when (row.mode) {
-                AccessMode.LAN -> row.caCertificate?.let { PairingTrust.validateCertificate(it, row.instanceId) != null } == true
-                AccessMode.REMOTE -> row.caCertificate == null
-            }
+            && PairedDeviceRecordPolicy.acceptsTrustAnchor(row.mode, row.caCertificate, row.instanceId)
             && normalizeDisplayName(row.displayName) != null
 
     private fun normalizeDisplayName(value: String): String? {
