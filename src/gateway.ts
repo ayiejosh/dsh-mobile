@@ -14,7 +14,8 @@ import {
   type ServerResponse,
 } from 'node:http'
 import { createServer as createHttpsServer, type Server as HttpsServer, type ServerOptions } from 'node:https'
-import { connect, isIP, type AddressInfo, type Socket } from 'node:net'
+import { connect, type AddressInfo, type Socket } from 'node:net'
+import { isIP } from './ip.js'
 import { Transform, type TransformCallback } from 'node:stream'
 import { pipeline } from 'node:stream/promises'
 import { promisify } from 'node:util'

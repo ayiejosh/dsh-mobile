@@ -145,6 +145,42 @@ describe('attach artefacts for an existing frps', () => {
 })
 
 describe('attach token masking, explicit reveal, and the self-signed transport switches', () => {
+  it('masks the shared token in every preview while the written frpc.toml keeps it', () => {
+    const settings = attachSettings({ vhostHttpPort: 8080 })
+    const parts = createFrpAttachTemplateParts(settings, { configFile: '/tmp/frpc.toml' })
+    expect(parts.local).toContain('auth.token = "***"')
+    expect(parts.local).not.toContain(TOKEN)
+    expect(parts.text).not.toContain(TOKEN)
+    // The head of the local half states both facts a reader cannot verify: the
+    // real file is 0600, and an unmasked copy would enter the clipboard.
+    expect(parts.local).toContain('0600 权限写入 /tmp/frpc.toml')
+    expect(parts.local).toContain('剪贴板')
+    // The VPS half never carries a token, masked or not.
+    expect(parts.vps).not.toContain('auth.token')
+    // The plan previews the same masked text and says so.
+    const plan = createFrpAttachPlan(settings, { configFile: '/tmp/frpc.toml' })
+    expect(plan.local.frpcToml).toContain('auth.token = "***"')
+    expect(plan.local.frpcToml).not.toContain(TOKEN)
+    expect(plan.local.tokenMasked).toBe(true)
+    // Masking is a display concern only: the artefact frpc reads stays complete.
+    expect(createFrpcToml(settings, 3443)).toContain(`auth.token = "${TOKEN}"`)
+    expect(createFrpAttachFrpcToml(settings, { localPort: 3443 })).toContain('auth.token = "***"')
+  })
+
+  it('reveals the token only when the caller explicitly asks for it', () => {
+    const settings = attachSettings({ entryTls: 'self-signed' })
+    const revealed = createFrpAttachTemplateParts(settings, { configFile: '/tmp/frpc.toml', revealToken: true })
+    expect(revealed.local).toContain(`auth.token = "${TOKEN}"`)
+    expect(revealed.local).not.toContain('auth.token = "***"')
+    expect(revealed.local).toContain('显式操作')
+    expect(revealed.local).toContain('剪贴板')
+    expect(revealed.vps).not.toContain('auth.token')
+    expect(createFrpAttachFrpcToml(settings, { localPort: 3443, revealToken: true }))
+      .toContain(`auth.token = "${TOKEN}"`)
+    const plan = createFrpAttachPlan(settings, { revealToken: true, configFile: '/tmp/frpc.toml' })
+    expect(plan.local.frpcToml).toContain(`auth.token = "${TOKEN}"`)
+    expect(plan.local.tokenMasked).toBe(false)
+  })
 
   it('keeps both transport switches on for the self-signed passthrough (QA D6)', () => {
     const settings = attachSettings({ entryTls: 'self-signed' })

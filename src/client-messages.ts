@@ -595,6 +595,7 @@ Object.assign(MOBILE_CONTROL_MESSAGES.en, {
   frpAttachModeRequiresVhostPort: 'Attach mode needs the real vhostHTTPPort of your frps; the plugin will not guess 7080.', frpAttachCertUnknownError: 'The self-signed ingress certificate is unknown; reconnect to re-issue it.', frpEntryTlsInvalid: 'This entry certificate mode cannot be provisioned with the selected mode.',
   frpAttachStepWriteSnippet: 'Create the Caddy snippet', frpAttachStepAddImport: 'Add the import line and reload Caddy', frpAttachStepIssueCert: 'Issue the public-IP certificate', frpAttachStepCertTimer: 'Confirm the renewal timer', frpAttachStepVerifyHttps: 'Verify the public HTTPS entry',
   frpAttachStepOpenPort: 'Open the public entry port', frpAttachStepVerifyFrps: 'Confirm your frps is ready', frpAttachStepVerifyEntry: 'Verify the tunnel end to end',
+  frpAttachToken: 'Copy frpc.toml with token', frpAttachTokenCopied: 'The plaintext frpc.toml is copied. It contains the shared token and stays in the clipboard until you clear it — do not paste it anywhere public.', frpAttachTokenFailed: 'Could not copy the frpc.toml with its token: {error}',
 })
 Object.assign(MOBILE_CONTROL_MESSAGES.it, {
   frpMode: 'Modalità di provisioning', frpModeDeploy: 'Installa frps qui (gestito)', frpModeAttach: 'Usa il mio frps esistente (niente SSH, nessuna modifica)',
@@ -608,6 +609,7 @@ Object.assign(MOBILE_CONTROL_MESSAGES.it, {
   frpAttachModeRequiresVhostPort: 'La modalità attach richiede il vhostHTTPPort reale del tuo frps; il plugin non presume 7080.', frpAttachCertUnknownError: 'Il certificato di ingresso autofirmato è sconosciuto; riconnettiti per rigenerarlo.', frpEntryTlsInvalid: 'Questa modalità di certificato non è compatibile con la modalità selezionata.',
   frpAttachStepWriteSnippet: 'Crea lo snippet Caddy', frpAttachStepAddImport: 'Aggiungi la riga import e ricarica Caddy', frpAttachStepIssueCert: 'Emetti il certificato per l’IP pubblico', frpAttachStepCertTimer: 'Verifica il timer di rinnovo', frpAttachStepVerifyHttps: 'Verifica l’ingresso HTTPS pubblico',
   frpAttachStepOpenPort: 'Apri la porta pubblica di ingresso', frpAttachStepVerifyFrps: 'Verifica che il tuo frps sia pronto', frpAttachStepVerifyEntry: 'Verifica il tunnel end-to-end',
+  frpAttachToken: 'Copia frpc.toml con token', frpAttachTokenCopied: 'frpc.toml in chiaro copiato. Contiene il token condiviso e resta negli appunti finché non li svuoti: non incollarlo in luoghi pubblici.', frpAttachTokenFailed: 'Impossibile copiare frpc.toml con il token: {error}',
 })
 Object.assign(MOBILE_CONTROL_MESSAGES.zh, {
   frpMode: '置备方式', frpModeDeploy: '由插件部署 frps（托管）', frpModeAttach: '接入我已有的 frps（零 SSH，不改动）',
@@ -621,4 +623,5 @@ Object.assign(MOBILE_CONTROL_MESSAGES.zh, {
   frpAttachModeRequiresVhostPort: '接入模式必须填写你 frps 真实的 vhostHTTPPort，插件不会替你假定 7080。', frpAttachCertUnknownError: '自签入口证书状态未知，重新连接即可重新签发。', frpEntryTlsInvalid: '当前置备方式无法使用该入口证书档。',
   frpAttachStepWriteSnippet: '新增 Caddy 片段', frpAttachStepAddImport: '加入 import 行并重载 Caddy', frpAttachStepIssueCert: '为公网 IP 签发证书', frpAttachStepCertTimer: '确认续期定时器', frpAttachStepVerifyHttps: '验证公网 HTTPS 入口',
   frpAttachStepOpenPort: '放行公网入口端口', frpAttachStepVerifyFrps: '确认既有 frps 已就绪', frpAttachStepVerifyEntry: '端到端验证隧道',
+  frpAttachToken: '复制含 Token 的 frpc.toml', frpAttachTokenCopied: '含 Token 的 frpc.toml（明文）已复制：它会留在系统剪贴板中，请勿粘贴到公开位置。', frpAttachTokenFailed: '复制含 Token 的 frpc.toml 失败：{error}',
 })

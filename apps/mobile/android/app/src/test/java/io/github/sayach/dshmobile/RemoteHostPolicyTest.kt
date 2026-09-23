@@ -1,11 +1,45 @@
 package io.github.sayach.dshmobile
 
+import org.json.JSONObject
+import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
+import org.junit.Assert.assertNotNull
 import org.junit.Assert.assertTrue
 import org.junit.Test
 
 /** Verifies provider detection for remote links and the Tailscale-only connectivity notice. */
 class RemoteHostPolicyTest {
+    private val contract: JSONObject by lazy {
+        val resource = javaClass.classLoader?.getResource("url-policy-cases.json")
+        assertNotNull("shared URL-policy contract is missing", resource)
+        JSONObject(resource!!.readText())
+    }
+
+    /**
+     * Runs the shared host vectors against the Android implementation. The remote
+     * entry for a self-hosted frps is a bare public IPv4, so the contract keeps
+     * every private, loopback, and documentation address out of that path.
+     */
+    @Test
+    fun remoteHostCandidatesMatchSharedContract() {
+        val cases = contract.getJSONArray("remoteHost")
+        assertTrue("remote host vectors are missing", cases.length() > 0)
+        for (index in 0 until cases.length()) {
+            val case = cases.getJSONObject(index)
+            val host = case.getString("host")
+            assertEquals(
+                case.getString("name"),
+                case.getBoolean("allowedRemote"),
+                RemoteHostPolicy.isAllowed(AccessMode.REMOTE, host),
+            )
+            assertEquals(
+                case.getString("name"),
+                case.getBoolean("allowedLan"),
+                RemoteHostPolicy.isAllowed(AccessMode.LAN, host),
+            )
+        }
+    }
+
     @Test
     fun recognizesSupportedRemoteProvidersCaseInsensitively() {
         assertTrue(RemoteHostPolicy.isSupported("computer.tail1234.ts.net"))

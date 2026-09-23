@@ -1,5 +1,5 @@
 import { randomBytes } from 'node:crypto'
-import { isIP } from 'node:net'
+import { isIP } from './ip.js'
 import { lstat, mkdir, readFile, rename, rm, writeFile } from 'node:fs/promises'
 import { basename, dirname, isAbsolute, join, resolve } from 'node:path'
 import { isGloballyRoutableIpv4 } from './network.js'

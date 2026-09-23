@@ -2,6 +2,10 @@
 
 [English guide](SELF_HOSTED_FRP.en.md)
 
+> **已经有一台跑着 frps 的 VPS？** 见 [接入你既有的 frps](ATTACH_EXISTING_FRPS.md)：
+> 插件不装不改你的 frps、**零 SSH**；还提供**完全不用公开证书**的自签穿透档（frps 只做 TCP 透传，
+> 网关自己终止 TLS，证书永不过期）。
+
 自建 FRP 适合已有 VPS、希望避开公共隧道带宽限制的用户。手机经 VPS 上的 Caddy 进入加密 FRP 隧道，再到达电脑上的 DSH；FRP 只负责传输，仍需完成 DSH 配对才能进入。
 
 ```text

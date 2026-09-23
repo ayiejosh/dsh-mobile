@@ -958,7 +958,10 @@ export async function apply(ctx: Context, config: PluginConfig): Promise<void> {
           // Read-only preview: blank fields keep their saved values, and nothing
           // on the VPS or the local filesystem is touched.
           const settings = mergeSavedFrpSettings(body, frpConfig.settings())
-          const options = { configFile: frpConfig.runtimeConfigFile }
+          // Previews are masked by default. Only the panel's explicit "copy the
+          // frpc.toml with its token" action sets revealToken, and the revealed
+          // text is copied by the caller instead of being stored anywhere.
+          const options = { configFile: frpConfig.runtimeConfigFile, revealToken: body.revealToken === true }
           logger.info('frp attach plan requested mode=%s entryTls=%s vhostHttpPort=%d',
             settings.mode ?? 'deploy', settings.entryTls ?? 'public-ip-cert', resolveFrpVhostHttpPort(settings))
           sendJson(response, 200, {

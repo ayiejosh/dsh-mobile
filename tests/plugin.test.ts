@@ -713,4 +713,41 @@ describe('attach-mode control routes', () => {
     expect(parsed.providers.frp.configuration).not.toHaveProperty('entryTls')
     expect(parsed.providers.frp.configuration).not.toHaveProperty('publicPort')
   })
+
+  it('masks the token in the attach preview and reveals it only on an explicit request', async () => {
+    const mounted = await mount()
+    const token = '0123456789abcdef0123456789abcdef'
+    const request = {
+      serverAddress: '1.2.3.4',
+      serverPort: 7000,
+      token,
+      publicOrigin: 'https://1.2.3.4',
+      mode: 'attach',
+      entryTls: 'self-signed',
+      publicPort: 33_080,
+    }
+    const masked = await invoke(mounted.route, 'POST', '/api/mobile-access/remote/frp/attach-plan', JSON.stringify(request))
+    expect(masked.status).toBe(200)
+    const maskedParsed = JSON.parse(masked.body) as {
+      frpAttachPlan: { local: { frpcToml: string; tokenMasked: boolean } }
+      frpAttachTemplate: string
+    }
+    // The default preview is masked in both artefacts the panel can copy.
+    expect(maskedParsed.frpAttachPlan.local.frpcToml).toContain('auth.token = "***"')
+    expect(maskedParsed.frpAttachPlan.local.tokenMasked).toBe(true)
+    expect(maskedParsed.frpAttachTemplate).not.toContain(token)
+    expect(masked.body).not.toContain(token)
+    // The panel's dedicated reveal action is the only caller that gets the plaintext.
+    const revealed = await invoke(mounted.route, 'POST', '/api/mobile-access/remote/frp/attach-plan',
+      JSON.stringify({ ...request, revealToken: true }))
+    expect(revealed.status).toBe(200)
+    const revealedParsed = JSON.parse(revealed.body) as {
+      frpAttachPlan: { local: { frpcToml: string; tokenMasked: boolean } }
+    }
+    expect(revealedParsed.frpAttachPlan.local.frpcToml).toContain(`auth.token = "${token}"`)
+    expect(revealedParsed.frpAttachPlan.local.tokenMasked).toBe(false)
+    // Neither preview persists anything: the control snapshot never carries the token.
+    const status = await invoke(mounted.route, 'GET', '/api/mobile-access/remote/control')
+    expect(status.body).not.toContain(token)
+  })
 })

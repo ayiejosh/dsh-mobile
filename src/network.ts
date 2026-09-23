@@ -1,4 +1,5 @@
-import { connect, isIP } from 'node:net'
+import { connect } from 'node:net'
+import { isIP } from './ip.js'
 
 /** A parsed IP network used to authorize directly connected clients. */
 export interface ParsedCidr {

@@ -911,6 +911,9 @@ function installControl(): { remove: () => void; toggle: () => void; isOpen: () 
   const frpStep2Text = element('p'); frpStep2Text.textContent = t('frpStep2Text')
   const frpCopyTemplate = element('button', 'dsh-mobile-control__secondary dsh-mobile-control__frp-action'); frpCopyTemplate.type = 'button'; frpCopyTemplate.textContent = t('copyServerTemplate')
   const frpCopyAttachPlan = element('button', 'dsh-mobile-control__secondary dsh-mobile-control__frp-action'); frpCopyAttachPlan.type = 'button'; frpCopyAttachPlan.textContent = t('frpAttachPlan'); frpCopyAttachPlan.hidden = true
+  // The only path that puts a plaintext token on the clipboard, and only after a
+  // deliberate click; the default copy button above always stays masked.
+  const frpCopyAttachToken = element('button', 'dsh-mobile-control__secondary dsh-mobile-control__frp-action'); frpCopyAttachToken.type = 'button'; frpCopyAttachToken.textContent = t('frpAttachToken'); frpCopyAttachToken.hidden = true
   const frpSelfCheckButton = element('button', 'dsh-mobile-control__secondary dsh-mobile-control__frp-action'); frpSelfCheckButton.type = 'button'; frpSelfCheckButton.textContent = t('frpAttachSelfCheck'); frpSelfCheckButton.hidden = true
   const frpSelfCheckStatus = element('p', 'dsh-mobile-control__component-status'); frpSelfCheckStatus.textContent = ''; frpSelfCheckStatus.hidden = true
   const vpsDeployText = element('p'); vpsDeployText.textContent = t('vpsDeployText')
@@ -932,7 +935,7 @@ function installControl(): { remove: () => void; toggle: () => void; isOpen: () 
   const vpsDeployStatus = element('p', 'dsh-mobile-control__component-status'); vpsDeployStatus.textContent = ''
   const vpsCopyUninstall = element('button', 'dsh-mobile-control__secondary dsh-mobile-control__frp-action'); vpsCopyUninstall.type = 'button'; vpsCopyUninstall.textContent = t('vpsCopyUninstall')
   const vpsUninstall = element('button', 'dsh-mobile-control__danger dsh-mobile-control__frp-action'); vpsUninstall.type = 'button'; vpsUninstall.textContent = t('vpsUninstall')
-  frpStep2.append(frpStep2Title, frpStep2Text, frpCopyTemplate, frpCopyAttachPlan, frpSelfCheckButton, frpSelfCheckStatus, vpsDeployText, vpsChangesTitle, vpsChanges, vpsDeployFields, vpsDeploy, vpsDeployStatus, vpsCopyUninstall, vpsUninstall)
+  frpStep2.append(frpStep2Title, frpStep2Text, frpCopyTemplate, frpCopyAttachPlan, frpCopyAttachToken, frpSelfCheckButton, frpSelfCheckStatus, vpsDeployText, vpsChangesTitle, vpsChanges, vpsDeployFields, vpsDeploy, vpsDeployStatus, vpsCopyUninstall, vpsUninstall)
   const frpStep3 = element('section', 'dsh-mobile-control__frp-step')
   const frpStep3Title = element('strong'); frpStep3Title.textContent = t('frpStep3Title')
   const frpStep3Text = element('p'); frpStep3Text.textContent = t('frpStep3Text')
@@ -1668,6 +1671,7 @@ function installControl(): { remove: () => void; toggle: () => void; isOpen: () 
     const selfSignedSelected = attachSelected && frpEntryTls.value === 'self-signed'
     frpCopyTemplate.hidden = attachSelected
     frpCopyAttachPlan.hidden = !attachSelected
+    frpCopyAttachToken.hidden = !attachSelected
     frpSelfCheckButton.hidden = !frpConfigured
     frpVhostPort.disabled = selfSignedSelected
     frpVhostLabel.hidden = selfSignedSelected
@@ -2101,6 +2105,56 @@ function installControl(): { remove: () => void; toggle: () => void; isOpen: () 
       }, error => { remoteStatus.textContent = frpAttachErrorText(String(error)); return undefined })
       .catch(error => { remoteStatus.textContent = t('frpAttachPlanFailed', { error: String(error) }) })
       .finally(() => { remoteProviderBusy = false; frpCopyAttachPlan.disabled = false })
+  })
+  /**
+   * Explicit reveal: copy the frpc.toml exactly as the plugin writes it, token
+   * included. It is a separate button on purpose — the default copy above never
+   * emits a plaintext token — and the text goes to the clipboard only, so no
+   * state, log, or localStorage entry ever carries it.
+   */
+  frpCopyAttachToken.addEventListener('click', () => {
+    const form = frpForm()
+    if (!validFrpServer(form.serverAddress) || !Number.isSafeInteger(form.serverPort)
+      || form.serverPort < 1 || form.serverPort > 65_535 || form.publicOrigin === '') {
+      remoteStatus.textContent = t('frpInputInvalid')
+      return
+    }
+    if (form.token !== '') {
+      // The typed token is already in this browser, so the file is built locally.
+      const attachForm = attachClipboardForm(form)
+      const code = frpAttachFormErrorCode(attachForm)
+      if (code !== undefined) {
+        remoteStatus.textContent = frpAttachErrorText(code)
+        return
+      }
+      void navigator.clipboard.writeText(createFrpAttachFrpcTomlForClipboard(attachForm, { revealToken: true }))
+        .then(() => { remoteStatus.textContent = t('frpAttachTokenCopied') },
+          () => { remoteStatus.textContent = t('frpAttachTokenFailed', { error: t('templateCopyFailed') }) })
+      return
+    }
+    if (!frpConfigured) {
+      remoteStatus.textContent = t('frpInputInvalid')
+      return
+    }
+    // The saved token is deliberately unreadable here, so the loopback host
+    // performs the one explicit reveal this panel offers.
+    remoteProviderBusy = true
+    frpCopyAttachToken.disabled = true
+    void controlRequestJson('/api/mobile-access/remote/frp/attach-plan', {
+      method: 'POST',
+      body: JSON.stringify({ ...form, revealToken: true }),
+    })
+      .then(data => {
+        const plan = data.frpAttachPlan !== null && typeof data.frpAttachPlan === 'object'
+          ? data.frpAttachPlan as Record<string, unknown> : {}
+        const local = plan.local !== null && typeof plan.local === 'object'
+          ? plan.local as Record<string, unknown> : {}
+        const text = typeof local.frpcToml === 'string' ? local.frpcToml : ''
+        if (text === '') throw new Error('frp_settings_invalid')
+        return navigator.clipboard.writeText(text).then(() => { remoteStatus.textContent = t('frpAttachTokenCopied') })
+      }, error => { remoteStatus.textContent = frpAttachErrorText(String(error)); return undefined })
+      .catch(error => { remoteStatus.textContent = t('frpAttachTokenFailed', { error: String(error) }) })
+      .finally(() => { remoteProviderBusy = false; frpCopyAttachToken.disabled = false })
   })
   const certificateStatusText = (status: Record<string, unknown> | undefined): string => {
     if (status === undefined) return ''
