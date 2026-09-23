@@ -129,6 +129,19 @@ describe('attach artefacts for an existing frps', () => {
     expect(selfSigned.vps[0]?.commands[0]).toBe('ufw allow 33080/tcp')
     expect(selfSigned.warnings.join('\n')).toContain('切勿把网关 listenHost 改成 0.0.0.0')
   })
+
+  it('parameterizes the Caddy site while keeping the legacy signature working', () => {
+    expect(createCaddySite('1.2.3.4', { vhostHttpPort: 8443 })).toContain('reverse_proxy 127.0.0.1:8443')
+    // The second parameter used to be the certificate directory; it still is.
+    expect(createCaddySite('1.2.3.4', '/custom/certs')).toContain('tls /custom/certs/fullchain.pem')
+    expect(createCaddySite('dsh.example.com', { vhostHttpPort: 8080 })).toBe('dsh.example.com {\n  reverse_proxy 127.0.0.1:8080\n}\n')
+    expect(createCaddySite('dsh.example.com')).toBe('dsh.example.com {\n  reverse_proxy 127.0.0.1:7080\n}\n')
+    expect(() => createCaddySite('dsh.example.com', { entryTls: 'self-signed' })).toThrow('frp_entry_tls_invalid')
+    expect(() => createRestrictedFrpServerTemplate(7000, TOKEN, 'https://dsh.example.com', { entryTls: 'self-signed' }))
+      .toThrow('frp_entry_tls_invalid')
+    expect(createRestrictedFrpServerTemplate(7000, TOKEN, 'https://dsh.example.com', { vhostHttpPort: 8080 }))
+      .toContain('vhostHTTPPort = 8080')
+  })
 })
 
 describe('attach token masking, explicit reveal, and the self-signed transport switches', () => {

@@ -1,5 +1,5 @@
 import { EventEmitter } from 'node:events'
-import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises'
+import { mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { dirname, join } from 'node:path'
 import { PassThrough } from 'node:stream'
@@ -119,6 +119,114 @@ describe('FRP provider lifecycle', () => {
       errorCode: 'frp_vhost_publicly_reachable',
     })
     expect(createGateway).not.toHaveBeenCalled()
+    await controller.close()
+  })
+
+  it('probes the vhost port the user configured, never a hard-coded 7080', async () => {
+    // A probe against the wrong port silently passes a publicly reachable
+    // plaintext vhost, which is exactly the cookie-theft path the gate exists for.
+    const { executable, config } = await fixture()
+    const probeVhostExposure = vi.fn(async () => false)
+    const controller = new FrpController({
+      store: new MemoryControlStore(),
+      executable,
+      config,
+      instanceId: 'c'.repeat(64),
+      createGateway: async () => gateway('c'.repeat(64)),
+      probeVhostExposure,
+      verifyConfig: async () => undefined,
+      launchClient: () => new FakeChild() as unknown as ChildProcessWithoutNullStreams,
+      probeDiscovery: vi.fn(async () => true),
+      startTimeoutMs: 500,
+      retryIntervalMs: 1,
+    })
+    await controller.initialize()
+    await controller.setEnabled(true)
+    expect(probeVhostExposure).toHaveBeenCalledWith('frp.example.com', 7080)
+    await controller.setEnabled(false)
+
+    await config.configure({
+      serverAddress: 'frp.example.com',
+      serverPort: 7000,
+      token: '0123456789abcdef0123456789abcdef',
+      publicOrigin: 'https://dsh.example.com',
+      mode: 'attach',
+      vhostHttpPort: 8080,
+    })
+    await controller.setEnabled(true)
+    expect(probeVhostExposure).toHaveBeenLastCalledWith('frp.example.com', 8080)
+    await controller.close()
+  })
+
+  it('skips the vhost probe for the self-signed TCP passthrough and writes a tcp proxy', async () => {
+    const { executable, config } = await fixture()
+    await config.configure({
+      serverAddress: 'frp.example.com',
+      serverPort: 7000,
+      token: '0123456789abcdef0123456789abcdef',
+      publicOrigin: 'https://dsh.example.com',
+      mode: 'attach',
+      entryTls: 'self-signed',
+      publicPort: 33_080,
+    })
+    const probeVhostExposure = vi.fn(async () => true)
+    const createGateway = vi.fn(async () => gateway('d'.repeat(64)))
+    const controller = new FrpController({
+      store: new MemoryControlStore(),
+      executable,
+      config,
+      instanceId: 'd'.repeat(64),
+      createGateway,
+      probeVhostExposure,
+      verifyConfig: async () => undefined,
+      launchClient: () => new FakeChild() as unknown as ChildProcessWithoutNullStreams,
+      probeDiscovery: vi.fn(async () => true),
+      startTimeoutMs: 500,
+      retryIntervalMs: 1,
+    })
+    await controller.initialize()
+    await controller.setEnabled(true)
+    // There is no plaintext vhost at all in this mode, so nothing may be probed:
+    // the injected probe would otherwise have failed the start.
+    expect(probeVhostExposure).not.toHaveBeenCalled()
+    await vi.waitFor(() => { expect(controller.status().state).toBe('ready') })
+    expect(createGateway).toHaveBeenCalledWith('https://dsh.example.com', expect.objectContaining({
+      mode: 'attach', entryTls: 'self-signed',
+    }))
+    const written = await readFile(config.runtimeConfigFile, 'utf8')
+    expect(written).toContain('type = "tcp"')
+    expect(written).toContain('remotePort = 33080')
+    expect(written).toContain('localIP = "127.0.0.1"')
+    expect(written).not.toContain('customDomains')
+    await controller.close()
+  })
+
+  it('surfaces an ingress certificate failure with its own stable code', async () => {
+    const { executable, config } = await fixture()
+    await config.configure({
+      serverAddress: 'frp.example.com',
+      serverPort: 7000,
+      token: '0123456789abcdef0123456789abcdef',
+      publicOrigin: 'https://dsh.example.com',
+      mode: 'attach',
+      entryTls: 'self-signed',
+    })
+    const controller = new FrpController({
+      store: new MemoryControlStore(),
+      executable,
+      config,
+      instanceId: 'e'.repeat(64),
+      createGateway: async () => { throw new Error('frp_attach_cert_unknown') },
+      probeVhostExposure: async () => false,
+    })
+    await controller.initialize()
+    await controller.setEnabled(true)
+    expect(controller.status()).toEqual({
+      enabled: true,
+      state: 'error',
+      origin: 'https://dsh.example.com',
+      errorCode: 'frp_attach_cert_unknown',
+    })
     await controller.close()
   })
 })

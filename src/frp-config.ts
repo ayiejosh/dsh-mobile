@@ -310,7 +310,10 @@ export function createFrpcToml(settings: FrpSettings, localPort: number): string
 
 /** Build the matching restricted frps and Caddy templates for one VPS. */
 export function createFrpServerTemplate(settings: FrpSettings): string {
-  return createRestrictedFrpServerTemplate(settings.serverPort, settings.token, settings.publicOrigin)
+  return createRestrictedFrpServerTemplate(settings.serverPort, settings.token, settings.publicOrigin, {
+    vhostHttpPort: resolveFrpVhostHttpPort(settings),
+    entryTls: resolveFrpEntryTls(settings),
+  })
 }
 
 async function atomicPrivateWrite(file: string, body: string): Promise<void> {
@@ -387,7 +390,7 @@ export class FrpConfigStore {
         serverPort: settings.serverPort,
         publicOrigin: settings.publicOrigin,
       }),
-      vhostHttpPort: FRP_VHOST_HTTP_PORT,
+      vhostHttpPort: settings === undefined ? FRP_VHOST_HTTP_PORT : resolveFrpVhostHttpPort(settings),
       storagePath: this.stateRoot,
       ...(this.errorCode === undefined ? {} : { errorCode: this.errorCode }),
       ...(mode === undefined || mode === 'deploy' ? {} : { mode }),

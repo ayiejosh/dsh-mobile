@@ -4,7 +4,7 @@ import { connect } from 'node:net'
 import { isAbsolute } from 'node:path'
 import type { MobileAccessControlStore } from './control.js'
 import type { FrpConfigStore, FrpSettings } from './frp-config.js'
-import { DEFAULT_VHOST_HTTP_PORT } from './frp-config.js'
+import { isFrpSelfSignedIngress, resolveFrpVhostHttpPort } from './frp-config.js'
 import type { MobileAccessGateway } from './gateway.js'
 import { settleRemoteResources, terminateRemoteProcess, type RemoteProviderController } from './remote.js'
 
@@ -276,19 +276,30 @@ export class FrpController implements RemoteProviderController {
       return
     }
     this.publish({ enabled: true, state: 'starting', origin: settings.publicOrigin })
-    let exposed: boolean
-    try {
-      exposed = await (this.options.probeVhostExposure ?? defaultProbeVhostExposure)(
-        settings.serverAddress,
-        DEFAULT_VHOST_HTTP_PORT,
-      )
-    } catch {
-      this.publish({ enabled: true, state: 'error', origin: settings.publicOrigin, errorCode: 'frp_vhost_probe_failed' })
-      return
-    }
-    if (exposed) {
-      this.publish({ enabled: true, state: 'error', origin: settings.publicOrigin, errorCode: 'frp_vhost_publicly_reachable' })
-      return
+    // The plaintext-vhost gate must probe the port the user's frps actually
+    // listens on. Probing the hard-coded upstream 7080 would report "not
+    // exposed" for a reachable vhost on any other port and let a cleartext
+    // session-cookie path through.
+    //
+    // The self-signed entry is a raw TCP passthrough with no vhost at all, so
+    // the probe does not apply: there the equivalent exposure — the public entry
+    // port being reachable — is the design itself, and protection comes from the
+    // gateway's own device pairing and authentication.
+    if (!isFrpSelfSignedIngress(settings)) {
+      let exposed: boolean
+      try {
+        exposed = await (this.options.probeVhostExposure ?? defaultProbeVhostExposure)(
+          settings.serverAddress,
+          resolveFrpVhostHttpPort(settings),
+        )
+      } catch {
+        this.publish({ enabled: true, state: 'error', origin: settings.publicOrigin, errorCode: 'frp_vhost_probe_failed' })
+        return
+      }
+      if (exposed) {
+        this.publish({ enabled: true, state: 'error', origin: settings.publicOrigin, errorCode: 'frp_vhost_publicly_reachable' })
+        return
+      }
     }
     let gateway: MobileAccessGateway
     try { gateway = await this.options.createGateway(settings.publicOrigin, settings) } catch (error) {

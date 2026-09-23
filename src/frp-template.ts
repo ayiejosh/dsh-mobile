@@ -155,7 +155,7 @@ export function createRestrictedFrpServerTemplate(
     '# frps.toml — save as /etc/dsh-mobile/frps.toml, then start the frps service.',
     `bindPort = ${String(serverPort)}`,
     'proxyBindAddr = "127.0.0.1"',
-    `vhostHTTPPort = ${String(FRP_VHOST_HTTP_PORT)}`,
+    `vhostHTTPPort = ${String(vhostHttpPort)}`,
     'auth.method = "token"',
     `auth.token = ${JSON.stringify(token)}`,
     '',
@@ -166,7 +166,7 @@ export function createRestrictedFrpServerTemplate(
     '# finally run: caddy validate --config /etc/caddy/Caddyfile && systemctl reload caddy',
     '# Uninstall later removes only this snippet file and the import line; your own Caddy content is kept.',
     `${FRP_CADDY_SNIPPET_MARKER}`,
-    createCaddySite(publicHost).trimEnd(),
+    createCaddySite(publicHost, { certDir, vhostHttpPort }).trimEnd(),
     '',
   ]
   if (publicIpv4Address(publicHost)) lines.push(manualIpCertificateGuide(publicHost), '')
