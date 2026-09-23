@@ -92,17 +92,40 @@ export type { BlockedUpgradePathEntry } from './websocket-paths.js'
 export type { FrpComponentStatus } from './frp-component.js'
 export {
   DEFAULT_VHOST_HTTP_PORT,
+  FRP_DEFAULT_PUBLIC_PORT,
+  FRP_RESERVED_PORTS,
   FrpConfigStore,
   createFrpServerTemplate,
   createFrpcToml,
   mergeSavedFrpSettings,
   mergeSavedFrpTarget,
   parseFrpSettings,
+  resolveFrpEntryTls,
+  resolveFrpMode,
+  resolveFrpPublicPort,
+  resolveFrpVhostHttpPort,
+  validateFrpEntryTls,
+  validateFrpMode,
   validateFrpPublicOrigin,
+  validateFrpPublicPort,
   validateFrpServerAddress,
   validateFrpServerPort,
   validateFrpToken,
+  validateFrpVhostHttpPort,
 } from './frp-config.js'
+export {
+  FRP_ATTACH_DISCOVERY_PATH,
+  FRP_ATTACH_LOCAL_DECLARATION,
+  FRP_ATTACH_SELF_SIGNED_DECLARATION,
+  FRP_ATTACH_VPS_DECLARATION,
+  createFrpAttachTemplate,
+  createFrpAttachTemplateParts,
+  frpAttachVpsParts,
+  validateAttachSettings,
+} from './frp-attach.js'
+export { createFrpAttachPlan } from './frp-attach-plan.js'
+export type { FrpAttachOptions, FrpAttachTemplate, FrpAttachVpsParts } from './frp-attach.js'
+export type { FrpAttachPlan, FrpAttachPlanLocal, FrpAttachPlanStep, FrpAttachStepId } from './frp-attach-plan.js'
 export {
   FRP_CADDY_IMPORT_LINE,
   FRP_CADDY_SNIPPET_MARKER,

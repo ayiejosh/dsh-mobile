@@ -570,3 +570,38 @@ export const DIAGNOSTIC_REASON_MESSAGES = {
     'phone-network-unknown': ['电脑无法判断路由器是否隔离了手机。', '确认手机与电脑使用同一网络，并关闭访客网络或 AP 隔离。'],
   },
 } as const
+
+// ── 接入既有 frps（attach）与自签穿透档：三语必须同时补齐（N12 断言键集一致） ──
+Object.assign(MOBILE_CONTROL_MESSAGES.en, {
+  frpMode: 'Provisioning mode', frpModeDeploy: 'Deploy frps here (managed)', frpModeAttach: 'Use my existing frps (no SSH, no changes)',
+  frpModeHint: 'Attach only writes frpc.toml on this computer and never installs, edits, or restarts your frps.',
+  frpEntryTls: 'Entry certificate', frpEntryTlsPublic: 'Public-CA IP certificate (Caddy, recommended)', frpEntryTlsSelfSigned: 'Self-signed passthrough (no public certificate at all)',
+  frpVhostHttpPort: 'frps vhostHTTPPort', frpVhostHttpPortHint: 'The loopback plaintext vhost port of your own frps (upstream default 7080).',
+  frpPublicPort: 'Public entry port', frpPublicPortHint: 'Raw TCP proxy port used as the public HTTPS entry (default 33080, never 3080/3443/3444).',
+  frpAttachPlan: 'Copy attach runbook', frpAttachPlanCopied: 'Attach runbook copied: local frpc.toml plus the VPS checklist.', frpAttachPlanFailed: 'Could not build the attach runbook: {error}',
+  frpAttachModeRequiresVhostPort: 'Attach mode needs the real vhostHTTPPort of your frps; the plugin will not guess 7080.', frpAttachCertUnknownError: 'The self-signed ingress certificate is unknown; reconnect to re-issue it.', frpEntryTlsInvalid: 'This entry certificate mode cannot be provisioned with the selected mode.',
+  frpAttachStepWriteSnippet: 'Create the Caddy snippet', frpAttachStepAddImport: 'Add the import line and reload Caddy', frpAttachStepIssueCert: 'Issue the public-IP certificate', frpAttachStepCertTimer: 'Confirm the renewal timer', frpAttachStepVerifyHttps: 'Verify the public HTTPS entry',
+  frpAttachStepOpenPort: 'Open the public entry port', frpAttachStepVerifyFrps: 'Confirm your frps is ready', frpAttachStepVerifyEntry: 'Verify the tunnel end to end',
+})
+Object.assign(MOBILE_CONTROL_MESSAGES.it, {
+  frpMode: 'Modalità di provisioning', frpModeDeploy: 'Installa frps qui (gestito)', frpModeAttach: 'Usa il mio frps esistente (niente SSH, nessuna modifica)',
+  frpModeHint: 'La modalità attach scrive solo frpc.toml su questo computer e non installa, modifica o riavvia il tuo frps.',
+  frpEntryTls: 'Certificato di ingresso', frpEntryTlsPublic: 'Certificato IP da CA pubblica (Caddy, consigliato)', frpEntryTlsSelfSigned: 'Passthrough autofirmato (nessun certificato pubblico)',
+  frpVhostHttpPort: 'vhostHTTPPort di frps', frpVhostHttpPortHint: 'Porta vhost in chiaro su loopback del tuo frps (predefinita 7080).',
+  frpPublicPort: 'Porta pubblica di ingresso', frpPublicPortHint: 'Porta del proxy TCP grezzo usata come ingresso HTTPS pubblico (predefinita 33080, mai 3080/3443/3444).',
+  frpAttachPlan: 'Copia il runbook attach', frpAttachPlanCopied: 'Runbook attach copiato: frpc.toml locale più la checklist VPS.', frpAttachPlanFailed: 'Impossibile creare il runbook attach: {error}',
+  frpAttachModeRequiresVhostPort: 'La modalità attach richiede il vhostHTTPPort reale del tuo frps; il plugin non presume 7080.', frpAttachCertUnknownError: 'Il certificato di ingresso autofirmato è sconosciuto; riconnettiti per rigenerarlo.', frpEntryTlsInvalid: 'Questa modalità di certificato non è compatibile con la modalità selezionata.',
+  frpAttachStepWriteSnippet: 'Crea lo snippet Caddy', frpAttachStepAddImport: 'Aggiungi la riga import e ricarica Caddy', frpAttachStepIssueCert: 'Emetti il certificato per l’IP pubblico', frpAttachStepCertTimer: 'Verifica il timer di rinnovo', frpAttachStepVerifyHttps: 'Verifica l’ingresso HTTPS pubblico',
+  frpAttachStepOpenPort: 'Apri la porta pubblica di ingresso', frpAttachStepVerifyFrps: 'Verifica che il tuo frps sia pronto', frpAttachStepVerifyEntry: 'Verifica il tunnel end-to-end',
+})
+Object.assign(MOBILE_CONTROL_MESSAGES.zh, {
+  frpMode: '置备方式', frpModeDeploy: '由插件部署 frps（托管）', frpModeAttach: '接入我已有的 frps（零 SSH，不改动）',
+  frpModeHint: '接入模式只在本机写入 frpc.toml，绝不安装、修改或重启你既有的 frps。',
+  frpEntryTls: '入口证书档', frpEntryTlsPublic: '公开 CA 的 IP 证书（Caddy，推荐）', frpEntryTlsSelfSigned: '自签穿透（完全不用公开证书）',
+  frpVhostHttpPort: 'frps 的 vhostHTTPPort', frpVhostHttpPortHint: '你自己 frps 的回环明文 vhost 端口（上游默认 7080）。',
+  frpPublicPort: '公网入口端口', frpPublicPortHint: '作为公网 HTTPS 入口的 TCP 透传端口（默认 33080，不得为 3080/3443/3444）。',
+  frpAttachPlan: '复制接入清单', frpAttachPlanCopied: '接入清单已复制：本机 frpc.toml 与 VPS 侧待办。', frpAttachPlanFailed: '生成接入清单失败：{error}',
+  frpAttachModeRequiresVhostPort: '接入模式必须填写你 frps 真实的 vhostHTTPPort，插件不会替你假定 7080。', frpAttachCertUnknownError: '自签入口证书状态未知，重新连接即可重新签发。', frpEntryTlsInvalid: '当前置备方式无法使用该入口证书档。',
+  frpAttachStepWriteSnippet: '新增 Caddy 片段', frpAttachStepAddImport: '加入 import 行并重载 Caddy', frpAttachStepIssueCert: '为公网 IP 签发证书', frpAttachStepCertTimer: '确认续期定时器', frpAttachStepVerifyHttps: '验证公网 HTTPS 入口',
+  frpAttachStepOpenPort: '放行公网入口端口', frpAttachStepVerifyFrps: '确认既有 frps 已就绪', frpAttachStepVerifyEntry: '端到端验证隧道',
+})

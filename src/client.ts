@@ -6,6 +6,8 @@ import {
   type MobileControlLocale,
 } from './client-messages.js'
 import { createRestrictedFrpServerTemplate } from './frp-template.js'
+import { createFrpAttachFrpcToml, createFrpAttachTemplate } from './frp-attach.js'
+import { parseFrpSettings, type FrpSettings } from './frp-config.js'
 import { installNativeMobileSurface, NATIVE_MOBILE_STYLES, resolveNativeMobileLanguage } from './native-mobile.js'
 import { isDesktopAdminSurface } from './local-admin-host.js'
 import { fireDeviceRevoked, fireTaskNotifyEvent, isDeviceRevokedPayload, parseTaskNotifyPayload, taskCompletionTag } from './task-notify.js'
@@ -487,6 +489,84 @@ export function createFrpServerTemplateForClipboard(serverPort: number, token: s
   return createRestrictedFrpServerTemplate(serverPort, token, publicOrigin)
 }
 
+/** Raw attach form values exactly as typed in the panel. */
+export interface FrpAttachClipboardForm {
+  readonly serverAddress: string
+  readonly serverPort: number
+  readonly token: string
+  readonly publicOrigin: string
+  readonly entryTls: 'public-ip-cert' | 'self-signed'
+  readonly vhostHttpPort?: number
+  readonly publicPort?: number
+}
+
+/**
+ * Options of the two attach artefacts the panel builds locally.
+ *
+ * `revealToken` defaults to false, so the ordinary copy button always produces
+ * masked text. Only the dedicated reveal action sets it, and its result goes
+ * straight to the clipboard — never into a stored state, a log, or localStorage.
+ */
+export interface FrpAttachClipboardOptions {
+  readonly revealToken?: boolean
+}
+
+/**
+ * Validate the panel form with the same parser the host uses, so a runbook can
+ * never describe a topology the provider would later refuse to start.
+ */
+function attachClipboardSettings(form: FrpAttachClipboardForm): FrpSettings {
+  return parseFrpSettings({
+    serverAddress: form.serverAddress,
+    serverPort: form.serverPort,
+    token: form.token,
+    publicOrigin: form.publicOrigin,
+    mode: 'attach',
+    entryTls: form.entryTls,
+    ...(form.entryTls === 'self-signed' || form.vhostHttpPort === undefined
+      ? {}
+      : { vhostHttpPort: form.vhostHttpPort }),
+    ...(form.publicPort === undefined ? {} : { publicPort: form.publicPort }),
+  })
+}
+
+/**
+ * Build the copy-only attach runbook locally, so the shared token never leaves
+ * the browser: the panel only ever copies text out. The text is masked by
+ * default; `options.revealToken` is the explicit opt-in.
+ */
+export function createFrpAttachTemplateForClipboard(
+  form: FrpAttachClipboardForm,
+  options: FrpAttachClipboardOptions = {},
+): string {
+  return createFrpAttachTemplate(attachClipboardSettings(form), options)
+}
+
+/**
+ * The frpc.toml exactly as the plugin writes it (0600), for the panel's explicit
+ * reveal action only. Every other path keeps the token masked.
+ */
+export function createFrpAttachFrpcTomlForClipboard(
+  form: FrpAttachClipboardForm,
+  options: FrpAttachClipboardOptions = {},
+): string {
+  return createFrpAttachFrpcToml(attachClipboardSettings(form), options)
+}
+
+/**
+ * Attach-mode validation for the panel. The parser is the single source of
+ * truth, so the panel reports exactly the codes the host would return instead of
+ * duplicating the rules (and drifting from them).
+ */
+export function frpAttachFormErrorCode(form: FrpAttachClipboardForm): string | undefined {
+  try {
+    createFrpAttachTemplateForClipboard(form)
+    return undefined
+  } catch (error) {
+    return error instanceof Error ? error.message : 'frp_settings_invalid'
+  }
+}
+
 const ORIGIN_ERROR_MESSAGE_KEYS: Readonly<Record<string, string>> = {
   origin_public_origin_invalid: 'originPublicOriginInvalid',
   origin_listen_host_invalid: 'originListenHostInvalid',
@@ -569,6 +649,9 @@ function installControl(): { remove: () => void; toggle: () => void; isOpen: () 
     frp_discovery_invalid: 'frpDiscoveryInvalid',
     frp_stopped: 'frpStopped',
     frp_exited: 'frpExited',
+    frp_attach_mode_requires_vhost_port: 'frpAttachModeRequiresVhostPort',
+    frp_attach_cert_unknown: 'frpAttachCertUnknownError',
+    frp_entry_tls_invalid: 'frpEntryTlsInvalid',
     ...ORIGIN_ERROR_MESSAGE_KEYS,
   }
 
@@ -799,12 +882,35 @@ function installControl(): { remove: () => void; toggle: () => void; isOpen: () 
   const frpToken = element('input'); frpToken.type = 'password'; frpToken.autocomplete = 'off'; frpToken.spellcheck = false; frpToken.placeholder = t('frpTokenPlaceholder')
   const frpOriginLabel = element('label', 'dsh-mobile-control__field'); frpOriginLabel.textContent = t('frpPublicOrigin')
   const frpOrigin = element('input'); frpOrigin.type = 'url'; frpOrigin.autocomplete = 'off'; frpOrigin.spellcheck = false; frpOrigin.placeholder = t('frpPublicOriginPlaceholder')
+  const frpModeLabel = element('label', 'dsh-mobile-control__field'); frpModeLabel.textContent = t('frpMode')
+  const frpMode = element('select')
+  for (const [value, label] of [['deploy', t('frpModeDeploy')], ['attach', t('frpModeAttach')]] as const) {
+    const option = element('option'); option.value = value; option.textContent = label; frpMode.append(option)
+  }
+  const frpModeHint = element('p', 'dsh-mobile-control__frp-hint'); frpModeHint.textContent = t('frpModeHint')
+  frpModeLabel.append(frpMode, frpModeHint)
+  const frpEntryTlsLabel = element('label', 'dsh-mobile-control__field'); frpEntryTlsLabel.textContent = t('frpEntryTls')
+  const frpEntryTls = element('select')
+  for (const [value, label] of [['public-ip-cert', t('frpEntryTlsPublic')], ['self-signed', t('frpEntryTlsSelfSigned')]] as const) {
+    const option = element('option'); option.value = value; option.textContent = label; frpEntryTls.append(option)
+  }
+  frpEntryTlsLabel.append(frpEntryTls)
+  const frpVhostLabel = element('label', 'dsh-mobile-control__field'); frpVhostLabel.textContent = t('frpVhostHttpPort')
+  const frpVhostPort = element('input'); frpVhostPort.type = 'number'; frpVhostPort.inputMode = 'numeric'; frpVhostPort.min = '1'; frpVhostPort.max = '65535'; frpVhostPort.value = '7080'; frpVhostPort.placeholder = '7080'
+  const frpVhostHint = element('p', 'dsh-mobile-control__frp-hint'); frpVhostHint.textContent = t('frpVhostHttpPortHint')
+  frpVhostLabel.append(frpVhostPort, frpVhostHint)
+  const frpPublicPortLabel = element('label', 'dsh-mobile-control__field'); frpPublicPortLabel.textContent = t('frpPublicPort')
+  const frpPublicPort = element('input'); frpPublicPort.type = 'number'; frpPublicPort.inputMode = 'numeric'; frpPublicPort.min = '1'; frpPublicPort.max = '65535'; frpPublicPort.value = '33080'; frpPublicPort.placeholder = '33080'
+  const frpPublicPortHint = element('p', 'dsh-mobile-control__frp-hint'); frpPublicPortHint.textContent = t('frpPublicPortHint')
+  frpPublicPortLabel.append(frpPublicPort, frpPublicPortHint)
   frpServerLabel.append(frpServer); frpPortLabel.append(frpPort); frpTokenLabel.append(frpToken); frpOriginLabel.append(frpOrigin)
-  frpFields.append(frpServerLabel, frpPortLabel, frpTokenLabel, frpOriginLabel); frpStep1.append(frpStep1Title, frpStep1Text, frpFields)
+  frpFields.append(frpServerLabel, frpPortLabel, frpTokenLabel, frpOriginLabel, frpModeLabel, frpEntryTlsLabel, frpVhostLabel, frpPublicPortLabel)
+  frpStep1.append(frpStep1Title, frpStep1Text, frpFields)
   const frpStep2 = element('section', 'dsh-mobile-control__frp-step')
   const frpStep2Title = element('strong'); frpStep2Title.textContent = t('frpStep2Title')
   const frpStep2Text = element('p'); frpStep2Text.textContent = t('frpStep2Text')
   const frpCopyTemplate = element('button', 'dsh-mobile-control__secondary dsh-mobile-control__frp-action'); frpCopyTemplate.type = 'button'; frpCopyTemplate.textContent = t('copyServerTemplate')
+  const frpCopyAttachPlan = element('button', 'dsh-mobile-control__secondary dsh-mobile-control__frp-action'); frpCopyAttachPlan.type = 'button'; frpCopyAttachPlan.textContent = t('frpAttachPlan'); frpCopyAttachPlan.hidden = true
   const vpsDeployText = element('p'); vpsDeployText.textContent = t('vpsDeployText')
   const vpsChangesTitle = element('p'); vpsChangesTitle.textContent = t('vpsDeployChangesTitle')
   const vpsChanges = element('ul', 'dsh-mobile-control__frp-changes')
@@ -824,7 +930,7 @@ function installControl(): { remove: () => void; toggle: () => void; isOpen: () 
   const vpsDeployStatus = element('p', 'dsh-mobile-control__component-status'); vpsDeployStatus.textContent = ''
   const vpsCopyUninstall = element('button', 'dsh-mobile-control__secondary dsh-mobile-control__frp-action'); vpsCopyUninstall.type = 'button'; vpsCopyUninstall.textContent = t('vpsCopyUninstall')
   const vpsUninstall = element('button', 'dsh-mobile-control__danger dsh-mobile-control__frp-action'); vpsUninstall.type = 'button'; vpsUninstall.textContent = t('vpsUninstall')
-  frpStep2.append(frpStep2Title, frpStep2Text, frpCopyTemplate, vpsDeployText, vpsChangesTitle, vpsChanges, vpsDeployFields, vpsDeploy, vpsDeployStatus, vpsCopyUninstall, vpsUninstall)
+  frpStep2.append(frpStep2Title, frpStep2Text, frpCopyTemplate, frpCopyAttachPlan, vpsDeployText, vpsChangesTitle, vpsChanges, vpsDeployFields, vpsDeploy, vpsDeployStatus, vpsCopyUninstall, vpsUninstall)
   const frpStep3 = element('section', 'dsh-mobile-control__frp-step')
   const frpStep3Title = element('strong'); frpStep3Title.textContent = t('frpStep3Title')
   const frpStep3Text = element('p'); frpStep3Text.textContent = t('frpStep3Text')
@@ -1150,6 +1256,10 @@ function installControl(): { remove: () => void; toggle: () => void; isOpen: () 
   let configuredFrpServer = ''
   let configuredFrpPort = 7000
   let configuredFrpOrigin = ''
+  let configuredFrpVhostPort = 7080
+  let configuredFrpPublicPort = 33_080
+  let frpConfiguredMode: 'deploy' | 'attach' = 'deploy'
+  let frpConfiguredEntryTls: 'public-ip-cert' | 'self-signed' = 'public-ip-cert'
   let providerInfoPinned = false
   let providerInfoHovered = false
   let previousAccessView: 'lan' | 'remote' = 'lan'
@@ -1536,6 +1646,37 @@ function installControl(): { remove: () => void; toggle: () => void; isOpen: () 
     if (frpOrigin.value === '' && configuredFrpOrigin !== '') frpOrigin.value = configuredFrpOrigin
     frpStorage.textContent = frpStoragePath
     frpStorage.title = frpStoragePath
+    // Provisioning mode and entry certificate hydrate from the saved status only
+    // while the form is untouched, exactly like the other saved fields.
+    const configuredFrpMode = frpConfiguration.mode === 'attach' ? 'attach' : 'deploy'
+    const configuredFrpEntryTls = frpConfiguration.entryTls === 'self-signed' ? 'self-signed' : 'public-ip-cert'
+    if (frpConfigured) {
+      frpConfiguredMode = configuredFrpMode
+      frpConfiguredEntryTls = configuredFrpEntryTls
+    }
+    if (frpConfigured && frpMode.value !== configuredFrpMode) frpMode.value = configuredFrpMode
+    if (frpConfigured && frpEntryTls.value !== configuredFrpEntryTls) frpEntryTls.value = configuredFrpEntryTls
+    if (typeof frpConfiguration.vhostHttpPort === 'number') configuredFrpVhostPort = frpConfiguration.vhostHttpPort
+    if (typeof frpConfiguration.publicPort === 'number') configuredFrpPublicPort = frpConfiguration.publicPort
+    if (frpVhostPort.value === '' || frpVhostPort.value === '7080') frpVhostPort.value = String(configuredFrpVhostPort)
+    if (frpPublicPort.value === '' || frpPublicPort.value === '33080') frpPublicPort.value = String(configuredFrpPublicPort)
+    // Attach mode never installs or deploys anything on the VPS: the runbook is
+    // the whole deliverable, so the SSH/deploy controls disappear.
+    const attachSelected = frpMode.value === 'attach'
+    const selfSignedSelected = attachSelected && frpEntryTls.value === 'self-signed'
+    frpCopyTemplate.hidden = attachSelected
+    frpCopyAttachPlan.hidden = !attachSelected
+    frpVhostPort.disabled = selfSignedSelected
+    frpVhostLabel.hidden = selfSignedSelected
+    frpPublicPortLabel.hidden = !selfSignedSelected
+    vpsDeployText.hidden = attachSelected
+    vpsChangesTitle.hidden = attachSelected
+    vpsChanges.hidden = attachSelected
+    vpsDeployFields.hidden = attachSelected
+    vpsDeploy.hidden = attachSelected
+    vpsDeployStatus.hidden = attachSelected
+    vpsCopyUninstall.hidden = attachSelected
+    vpsUninstall.hidden = attachSelected
     frpInstall.hidden = frpInstalled || !frpSupported
     frpInstall.textContent = frpDownloadBytes > 0
       ? t('installWithSize', { size: formatMegabytes(frpDownloadBytes) })
@@ -1858,11 +1999,46 @@ function installControl(): { remove: () => void; toggle: () => void; isOpen: () 
   })
   const validFrpServer = (value: string): boolean => value === value.trim() && value.length > 0 && value.length <= 253
     && !/[\s\u0000-\u001f\u007f/\\@?#]/u.test(value)
-  const frpForm = (): { readonly serverAddress: string; readonly serverPort: number; readonly token: string; readonly publicOrigin: string } => ({
-    serverAddress: String(frpServer.value ?? '').trim(),
-    serverPort: Number(frpPort.value),
-    token: String(frpToken.value ?? ''),
-    publicOrigin: String(frpOrigin.value ?? '').trim(),
+  const frpForm = (): {
+    readonly serverAddress: string
+    readonly serverPort: number
+    readonly token: string
+    readonly publicOrigin: string
+    readonly mode: 'deploy' | 'attach'
+    readonly entryTls: 'public-ip-cert' | 'self-signed'
+    readonly vhostHttpPort?: number
+    readonly publicPort?: number
+  } => {
+    const vhostHttpPort = Number(frpVhostPort.value)
+    const publicPort = Number(frpPublicPort.value)
+    const mode = frpMode.value === 'attach' ? 'attach' as const : 'deploy' as const
+    return {
+      serverAddress: String(frpServer.value ?? '').trim(),
+      serverPort: Number(frpPort.value),
+      token: String(frpToken.value ?? ''),
+      publicOrigin: String(frpOrigin.value ?? '').trim(),
+      mode,
+      entryTls: frpEntryTls.value === 'self-signed' ? 'self-signed' as const : 'public-ip-cert' as const,
+      // A blank vhost port in attach mode must stay blank: the host refuses to
+      // guess 7080 rather than silently probing the wrong port.
+      ...(Number.isSafeInteger(vhostHttpPort) && vhostHttpPort >= 1 ? { vhostHttpPort } : {}),
+      ...(Number.isSafeInteger(publicPort) && publicPort >= 1 ? { publicPort } : {}),
+    }
+  }
+  /** Attach mode never installs frps; every other combination keeps the managed path. */
+  const frpAttachSelected = (): boolean => frpForm().mode === 'attach'
+  /**
+   * Attach-mode artefacts are built locally, so the token never reaches the host
+   * API and the runbook can be produced before anything is saved.
+   */
+  const attachClipboardForm = (form: ReturnType<typeof frpForm>): Parameters<typeof createFrpAttachTemplateForClipboard>[0] => ({
+    serverAddress: form.serverAddress,
+    serverPort: form.serverPort,
+    token: form.token === '' && frpConfigured ? '0123456789abcdef' : form.token,
+    publicOrigin: form.publicOrigin,
+    entryTls: form.entryTls,
+    ...(form.entryTls === 'self-signed' || form.vhostHttpPort === undefined ? {} : { vhostHttpPort: form.vhostHttpPort }),
+    ...(form.publicPort === undefined ? {} : { publicPort: form.publicPort }),
   })
   const validFrpForm = (form: ReturnType<typeof frpForm>): boolean => {
     if (!validFrpServer(form.serverAddress)) return false
@@ -1879,6 +2055,49 @@ function installControl(): { remove: () => void; toggle: () => void; isOpen: () 
     }
     void navigator.clipboard.writeText(createFrpServerTemplateForClipboard(form.serverPort, form.token, form.publicOrigin))
       .then(() => { remoteStatus.textContent = t('templateCopied') }, () => { remoteStatus.textContent = t('templateCopyFailed') })
+  })
+  const frpAttachErrorKeys: Readonly<Record<string, string>> = {
+    frp_attach_mode_requires_vhost_port: 'frpAttachModeRequiresVhostPort',
+    frp_attach_cert_unknown: 'frpAttachCertUnknownError',
+    frp_entry_tls_invalid: 'frpEntryTlsInvalid',
+  }
+  const frpAttachErrorText = (code: string): string => t(frpAttachErrorKeys[code] ?? 'frpInputInvalid')
+  frpCopyAttachPlan.addEventListener('click', () => {
+    const form = frpForm()
+    if (!validFrpServer(form.serverAddress) || !Number.isSafeInteger(form.serverPort)
+      || form.serverPort < 1 || form.serverPort > 65_535 || form.publicOrigin === '') {
+      remoteStatus.textContent = t('frpInputInvalid')
+      return
+    }
+    if (form.token !== '') {
+      // Everything needed is local, so the token stays in the browser.
+      const attachForm = attachClipboardForm(form)
+      const code = frpAttachFormErrorCode(attachForm)
+      if (code !== undefined) {
+        remoteStatus.textContent = frpAttachErrorText(code)
+        return
+      }
+      void navigator.clipboard.writeText(createFrpAttachTemplateForClipboard(attachForm))
+        .then(() => { remoteStatus.textContent = t('frpAttachPlanCopied') },
+          () => { remoteStatus.textContent = t('frpAttachPlanFailed', { error: t('templateCopyFailed') }) })
+      return
+    }
+    if (!frpConfigured) {
+      remoteStatus.textContent = t('frpInputInvalid')
+      return
+    }
+    // The saved token is deliberately unreadable here, so the loopback host
+    // merges it and returns the same runbook text.
+    remoteProviderBusy = true
+    frpCopyAttachPlan.disabled = true
+    void controlRequestJson('/api/mobile-access/remote/frp/attach-plan', { method: 'POST', body: JSON.stringify(form) })
+      .then(data => {
+        const text = typeof data.frpAttachTemplate === 'string' ? data.frpAttachTemplate : ''
+        if (text === '') throw new Error('frp_settings_invalid')
+        return navigator.clipboard.writeText(text).then(() => { remoteStatus.textContent = t('frpAttachPlanCopied') })
+      }, error => { remoteStatus.textContent = frpAttachErrorText(String(error)); return undefined })
+      .catch(error => { remoteStatus.textContent = t('frpAttachPlanFailed', { error: String(error) }) })
+      .finally(() => { remoteProviderBusy = false; frpCopyAttachPlan.disabled = false })
   })
   const validVpsSshUser = (value: string): boolean => /^[a-z_][a-z0-9_.-]*[$]?$/iu.test(value) && value.length <= 64
   const validVpsSshKey = (value: string): boolean => value === '' || (/^[a-zA-Z]:[\\/]/u.test(value) || value.startsWith('/'))
@@ -1919,6 +2138,10 @@ function installControl(): { remove: () => void; toggle: () => void; isOpen: () 
       serverPort: Number.isSafeInteger(form.serverPort) && form.serverPort >= 1 ? form.serverPort : configuredFrpPort,
       token: form.token,
       publicOrigin: form.publicOrigin === '' ? configuredFrpOrigin : form.publicOrigin,
+      mode: form.mode,
+      entryTls: form.entryTls,
+      ...(form.vhostHttpPort === undefined ? {} : { vhostHttpPort: form.vhostHttpPort }),
+      ...(form.publicPort === undefined ? {} : { publicPort: form.publicPort }),
     }
   }
   const validVpsFrpForm = (): boolean => {
@@ -2118,9 +2341,23 @@ function installControl(): { remove: () => void; toggle: () => void; isOpen: () 
     const form = frpForm()
     const unchanged = frpConfigured && form.token === '' && form.serverAddress === configuredFrpServer
       && form.serverPort === configuredFrpPort && form.publicOrigin === configuredFrpOrigin
-    if (!unchanged && !validFrpForm(form)) {
-      remoteStatus.textContent = t('frpInputInvalid')
-      return
+      // A mode or entry-certificate change is a real change even when the four
+      // connection fields are untouched.
+      && form.mode === (frpConfiguredMode === 'attach' ? 'attach' : 'deploy')
+      && form.entryTls === (frpConfiguredEntryTls === 'self-signed' ? 'self-signed' : 'public-ip-cert')
+      && (form.vhostHttpPort ?? configuredFrpVhostPort) === configuredFrpVhostPort
+      && (form.publicPort ?? configuredFrpPublicPort) === configuredFrpPublicPort
+    if (!unchanged) {
+      // Attach mode is validated by the same parser the host uses, so the panel
+      // reports the exact code (for example a missing vhostHTTPPort) instead of a
+      // generic "invalid input".
+      const code = form.mode === 'attach'
+        ? frpAttachFormErrorCode(attachClipboardForm(form))
+        : (validFrpForm(form) ? undefined : 'frp_settings_invalid')
+      if (code !== undefined) {
+        remoteStatus.textContent = form.mode === 'attach' ? frpAttachErrorText(code) : t('frpInputInvalid')
+        return
+      }
     }
     remoteProviderBusy = true
     frpConfigure.disabled = true
@@ -2401,7 +2638,7 @@ function installControl(): { remove: () => void; toggle: () => void; isOpen: () 
           sidecar_launch_failed: 'remoteUnavailableTailscale', sidecar_stopped: 'controlChannelFailed', sidecar_exited: 'controlChannelFailed', control_channel_failed: 'controlChannelFailed',
           cpolar_component_missing: 'cpolarMissing', cpolar_component_invalid: 'cpolarInvalid', cpolar_config_missing: 'cpolarConfigMissing', cpolar_config_invalid: 'cpolarConfigInvalid', cpolar_start_timeout: 'cpolarTimeout', cpolar_stopped: 'cpolarStopped', cpolar_exited: 'cpolarExited',
           cloudflared_component_missing: 'cloudflaredMissing', cloudflared_component_invalid: 'cloudflaredInvalid', cloudflared_component_unsupported: 'cloudflaredComponentUnsupported', cloudflared_port_unavailable: 'cloudflaredPortUnavailable', cloudflared_port_reservation_failed: 'cloudflaredPortReservationFailed', cloudflared_launch_failed: 'cloudflaredLaunchFailed', cloudflared_start_timeout: 'cloudflaredTimeout', cloudflared_stopped: 'cloudflaredStopped', cloudflared_exited: 'cloudflaredExited', cloudflared_invalid_origin: 'cloudflaredOriginInvalid', cloudflared_tunnel_port_unavailable: 'cloudflaredTunnelPortUnavailable', cloudflared_tunnel_config_invalid: 'cloudflaredTunnelInvalid', cloudflared_tunnel_target_invalid: 'cloudflaredTunnelTargetInvalid', cloudflared_download_hash_mismatch: 'cloudflaredDownloadHashMismatch', cloudflared_download_size_mismatch: 'cloudflaredDownloadSizeMismatch', cloudflared_executable_hash_mismatch: 'cloudflaredExecutableHashMismatch',
-          frp_component_missing: 'frpMissing', frp_component_invalid: 'frpInvalid', frp_config_missing: 'frpConfigMissing', frp_config_verify_failed: 'frpConfigVerifyFailed', frp_vhost_publicly_reachable: 'frpVhostPublic', frp_vhost_probe_failed: 'frpVhostProbeFailed', frp_launch_failed: 'frpLaunchFailed', frp_start_timeout: 'frpTimeout', frp_discovery_mismatch: 'frpDiscoveryMismatch', frp_discovery_invalid: 'frpDiscoveryInvalid', frp_stopped: 'frpStopped', frp_exited: 'frpExited', gateway_start_failed: 'gatewayStartFailed',
+          frp_component_missing: 'frpMissing', frp_component_invalid: 'frpInvalid', frp_config_missing: 'frpConfigMissing', frp_config_verify_failed: 'frpConfigVerifyFailed', frp_vhost_publicly_reachable: 'frpVhostPublic', frp_vhost_probe_failed: 'frpVhostProbeFailed', frp_launch_failed: 'frpLaunchFailed', frp_start_timeout: 'frpTimeout', frp_discovery_mismatch: 'frpDiscoveryMismatch', frp_discovery_invalid: 'frpDiscoveryInvalid', frp_stopped: 'frpStopped', frp_exited: 'frpExited', gateway_start_failed: 'gatewayStartFailed', frp_attach_mode_requires_vhost_port: 'frpAttachModeRequiresVhostPort', frp_attach_cert_unknown: 'frpAttachCertUnknownError', frp_entry_tls_invalid: 'frpEntryTlsInvalid',
         }
         const actionKey = controllerActionKeys[values.controllerCode ?? '']
         if (actionKey !== undefined) action = t(actionKey)
@@ -3610,7 +3847,7 @@ export const CONTROL_STYLES = `
    style rule of its own. */
 .dsh-mobile-control__cpolar-setup{margin:0 0 12px;padding:12px;border:1px solid var(--dsw-alias-border-l2,#dbe1e8);border-radius:13px;background:var(--dsw-alias-bg-layer-2,#fff)}.dsh-mobile-control__cpolar-setup[hidden],.dsh-mobile-control__cpolar-account[hidden],.dsh-mobile-control__details[hidden],.dsh-mobile-control__view.is-remote .dsh-mobile-control__actions[hidden],.dsh-mobile-control__danger[hidden]{display:none}.dsh-mobile-control__component-status,.dsh-mobile-control__component-note{margin:0 0 10px;color:var(--dsw-alias-label-secondary,#606873);font-size:11px;line-height:1.55}.dsh-mobile-control__cpolar-setup>.dsh-mobile-control__primary{width:100%;min-height:44px;padding:9px 12px;border-radius:10px;font:600 12px/1.3 system-ui;cursor:pointer}.dsh-mobile-control__cpolar-account{margin-top:10px}.dsh-mobile-control__link-row{display:flex;flex-wrap:wrap;gap:6px 12px;margin:0 0 10px}.dsh-mobile-control__text-link{color:var(--dsw-alias-label-primary-bluish,#2563eb);font-size:11px;text-decoration:none}.dsh-mobile-control__text-link:hover{text-decoration:underline}.dsh-mobile-control__token-label{display:flex;flex-direction:column;gap:5px;margin:0 0 8px;color:var(--dsw-alias-label-secondary,#606873);font-size:11px}.dsh-mobile-control__token{box-sizing:border-box;width:100%;min-height:44px;padding:9px 10px;border:1px solid var(--dsw-alias-border-l3,#cfd5dd);border-radius:10px;background:var(--dsw-alias-bg-layer-3,var(--dsw-alias-bg-layer-2,#fff));color:var(--dsw-alias-label-primary,#16181d);font:16px/1.4 system-ui}.dsh-mobile-control__cpolar-connect{display:flex;align-items:center;justify-content:center;box-sizing:border-box;width:100%;min-height:44px;padding:10px 14px;border-radius:12px;font:650 13px/1.2 system-ui;cursor:pointer;transition:background-color 160ms ease,border-color 160ms ease,opacity 160ms ease}.dsh-mobile-control__cpolar-connect:hover:not(:disabled){border-color:#1d4ed8;background:#1d4ed8}.dsh-mobile-control__cpolar-connect:active:not(:disabled){border-color:#1e40af;background:#1e40af}.dsh-mobile-control__cpolar-connect:disabled{cursor:wait;opacity:.55}.dsh-mobile-control__details{margin:10px 0 0;border-top:1px solid var(--dsw-alias-border-l2,#e1e5eb);padding-top:9px}.dsh-mobile-control__details>summary{min-height:36px;color:var(--dsw-alias-label-secondary,#606873);font-size:11px;line-height:30px;cursor:pointer}.dsh-mobile-control__details-body{display:flex;flex-wrap:wrap;align-items:center;gap:7px 12px;padding:4px 0}.dsh-mobile-control__details-body p{flex:1 0 100%;margin:0;color:var(--dsw-alias-label-secondary,#606873);font-size:11px;line-height:1.5}.dsh-mobile-control__storage{display:block;flex:1 0 100%;max-width:100%;overflow:hidden;padding:7px 8px;border-radius:8px;background:var(--dsw-alias-bg-layer-1,#f3f5f8);color:var(--dsw-alias-label-secondary,#475569);font:11px/1.4 ui-monospace,SFMono-Regular,Consolas,monospace;text-overflow:ellipsis;white-space:nowrap}.dsh-mobile-control__danger{flex:1 0 100%;min-height:44px;margin-top:3px;padding:7px 10px;border:1px solid var(--dsw-alias-state-error-primary,#dc2626);border-radius:9px;background:transparent;color:var(--dsw-alias-label-primary,#dc2626);font:12px/1.3 system-ui;cursor:pointer}
 .dsh-mobile-control__danger:hover:not(:disabled),.dsh-mobile-control__device-revoke:hover{background:var(--dsw-alias-interactive-bg-hover-danger,rgb(220 38 38 / 8%))}
-.dsh-mobile-control__frp-setup{margin:0;padding:12px;border:1px solid var(--dsw-alias-border-l2,#dbe1e8);border-radius:13px;background:var(--dsw-alias-bg-layer-2,#fff)}.dsh-mobile-control__frp-setup[hidden]{display:none}.dsh-mobile-control__frp-step{padding:11px 0}.dsh-mobile-control__frp-step + .dsh-mobile-control__frp-step{border-top:1px solid var(--dsw-alias-border-l2,#e1e5eb)}.dsh-mobile-control__frp-step>strong{display:block;margin-bottom:3px;font-size:12px;line-height:1.4}.dsh-mobile-control__frp-step>p{margin:0 0 9px;color:var(--dsw-alias-label-secondary,#606873);font-size:11px;line-height:1.5}.dsh-mobile-control__frp-changes{margin:0 0 9px;padding:0;list-style:none;color:var(--dsw-alias-label-secondary,#606873);font-size:11px;line-height:1.5}.dsh-mobile-control__frp-changes li{position:relative;margin:0;padding-left:12px}.dsh-mobile-control__frp-changes li+li{margin-top:5px}.dsh-mobile-control__frp-changes li::before{content:"•";position:absolute;left:2px;color:var(--dsw-alias-label-tertiary,#98a1ad)}.dsh-mobile-control__frp-step>.dsh-mobile-control__frp-requirement{padding:8px 9px;border-radius:9px;background:var(--dsw-alias-bg-layer-1,#f3f5f8);color:var(--dsw-alias-label-primary,#384152);font-size:11px}.dsh-mobile-control__frp-fields{display:grid;grid-template-columns:minmax(0,1fr) 96px;gap:8px}.dsh-mobile-control__field{display:flex;min-width:0;flex-direction:column;gap:5px;color:var(--dsw-alias-label-secondary,#606873);font-size:11px}.dsh-mobile-control__field:nth-child(3),.dsh-mobile-control__field:nth-child(4){grid-column:1/-1}.dsh-mobile-control__field input{box-sizing:border-box;width:100%;min-height:44px;padding:9px 10px;border:1px solid var(--dsw-alias-border-l3,#cfd5dd);border-radius:10px;background:var(--dsw-alias-bg-layer-2,#fff);color:var(--dsw-alias-label-primary,#16181d);font:16px/1.4 system-ui}.dsh-mobile-control__frp-action{box-sizing:border-box;width:100%;min-height:44px;padding:9px 12px;border-radius:10px;font:650 12px/1.3 system-ui;cursor:pointer}.dsh-mobile-control__frp-action:disabled{cursor:not-allowed;opacity:.5}.dsh-mobile-control__remote-workspace{margin:0;padding:12px;border:1px solid var(--dsw-alias-border-l2,#dbe1e8);border-radius:15px;background:var(--dsw-alias-bg-layer-1,#f7f8fa)}.dsh-mobile-control__stage-header{display:flex;align-items:center;justify-content:space-between;gap:10px;margin-bottom:9px}.dsh-mobile-control__stage-header .dsh-mobile-control__section-title{margin:0}.dsh-mobile-control__stage-meta{display:flex;min-width:0;align-items:center;justify-content:flex-end;gap:5px}.dsh-mobile-control__stage-value{max-width:115px;overflow:hidden;color:var(--dsw-alias-label-primary,#16181d);font:650 11px/1.3 system-ui;text-overflow:ellipsis;white-space:nowrap}.dsh-mobile-control__state-badge{flex:none;padding:3px 7px;border-radius:999px;background:var(--dsw-alias-bg-layer-2,#fff);color:var(--dsw-alias-label-secondary,#606873);font:650 11px/1.25 system-ui}.dsh-mobile-control__state-badge.is-ready{background:var(--dsw-alias-state-success-tertiary,#e6f7f0);color:var(--dsw-alias-label-primary,#087454)}.dsh-mobile-control__state-badge.is-busy{background:var(--dsw-alias-state-business-tertiary,#e8f0ff);color:var(--dsw-alias-label-primary,#1d4ed8)}.dsh-mobile-control__state-badge.is-attention{background:var(--dsw-alias-state-warn-tertiary,#fff4dc);color:var(--dsw-alias-label-primary,#935100)}.dsh-mobile-control__remote-workspace>.dsh-mobile-control__status{box-sizing:border-box;margin:0 0 10px;padding:9px 10px;border-radius:10px;background:var(--dsw-alias-bg-layer-2,#fff);font-size:11px;line-height:1.45}.dsh-mobile-control__provider-setup-body{margin:0 0 10px}.dsh-mobile-control__provider-setup-body>.dsh-mobile-control__cpolar-setup{margin:0}.dsh-mobile-control__provider-setup-body>.dsh-mobile-control__cpolar-setup>.dsh-mobile-control__section-title,.dsh-mobile-control__provider-setup-body>.dsh-mobile-control__frp-setup>.dsh-mobile-control__section-title{display:none}.dsh-mobile-control__provider-setup-body>.dsh-mobile-control__details{margin:0;padding:9px 10px;border:1px solid var(--dsw-alias-border-l2,#dbe1e8);border-radius:11px;background:var(--dsw-alias-bg-layer-2,#fff)}.dsh-mobile-control__remote-workspace>.dsh-mobile-control__actions{margin-top:2px}.dsh-mobile-control__remote-workspace>.dsh-mobile-control__qr{margin:10px 0 0}.dsh-mobile-control__remote-workspace>.dsh-mobile-control__manage-row{margin-top:10px;padding-top:10px;border-top:1px solid var(--dsw-alias-border-l2,#e1e5eb)}
+.dsh-mobile-control__frp-setup{margin:0;padding:12px;border:1px solid var(--dsw-alias-border-l2,#dbe1e8);border-radius:13px;background:var(--dsw-alias-bg-layer-2,#fff)}.dsh-mobile-control__frp-setup[hidden]{display:none}.dsh-mobile-control__frp-step{padding:11px 0}.dsh-mobile-control__frp-step + .dsh-mobile-control__frp-step{border-top:1px solid var(--dsw-alias-border-l2,#e1e5eb)}.dsh-mobile-control__frp-step>strong{display:block;margin-bottom:3px;font-size:12px;line-height:1.4}.dsh-mobile-control__frp-step>p{margin:0 0 9px;color:var(--dsw-alias-label-secondary,#606873);font-size:11px;line-height:1.5}.dsh-mobile-control__frp-changes{margin:0 0 9px;padding:0;list-style:none;color:var(--dsw-alias-label-secondary,#606873);font-size:11px;line-height:1.5}.dsh-mobile-control__frp-changes li{position:relative;margin:0;padding-left:12px}.dsh-mobile-control__frp-changes li+li{margin-top:5px}.dsh-mobile-control__frp-changes li::before{content:"•";position:absolute;left:2px;color:var(--dsw-alias-label-tertiary,#98a1ad)}.dsh-mobile-control__frp-step>.dsh-mobile-control__frp-requirement{padding:8px 9px;border-radius:9px;background:var(--dsw-alias-bg-layer-1,#f3f5f8);color:var(--dsw-alias-label-primary,#384152);font-size:11px}.dsh-mobile-control__frp-fields{display:grid;grid-template-columns:minmax(0,1fr) 96px;gap:8px}.dsh-mobile-control__frp-fields>.dsh-mobile-control__field:nth-child(5),.dsh-mobile-control__frp-fields>.dsh-mobile-control__field:nth-child(6){grid-column:1/-1}.dsh-mobile-control__frp-fields>.dsh-mobile-control__field[hidden]{display:none}.dsh-mobile-control__frp-fields select{box-sizing:border-box;width:100%;min-height:44px;padding:9px 32px 9px 10px;border:1px solid var(--dsw-alias-border-l3,#cfd5dd);border-radius:10px;background:var(--dsw-alias-bg-layer-2,#fff);color:var(--dsw-alias-label-primary,#16181d);font:14px/1.4 system-ui}.dsh-mobile-control__frp-fields select:disabled{cursor:not-allowed;opacity:.55}.dsh-mobile-control__frp-hint{margin:0;color:var(--dsw-alias-label-secondary,#606873);font-size:11px;line-height:1.5}.dsh-mobile-control__field{display:flex;min-width:0;flex-direction:column;gap:5px;color:var(--dsw-alias-label-secondary,#606873);font-size:11px}.dsh-mobile-control__field:nth-child(3),.dsh-mobile-control__field:nth-child(4){grid-column:1/-1}.dsh-mobile-control__field input{box-sizing:border-box;width:100%;min-height:44px;padding:9px 10px;border:1px solid var(--dsw-alias-border-l3,#cfd5dd);border-radius:10px;background:var(--dsw-alias-bg-layer-2,#fff);color:var(--dsw-alias-label-primary,#16181d);font:16px/1.4 system-ui}.dsh-mobile-control__frp-action{box-sizing:border-box;width:100%;min-height:44px;padding:9px 12px;border-radius:10px;font:650 12px/1.3 system-ui;cursor:pointer}.dsh-mobile-control__frp-action:disabled{cursor:not-allowed;opacity:.5}.dsh-mobile-control__remote-workspace{margin:0;padding:12px;border:1px solid var(--dsw-alias-border-l2,#dbe1e8);border-radius:15px;background:var(--dsw-alias-bg-layer-1,#f7f8fa)}.dsh-mobile-control__stage-header{display:flex;align-items:center;justify-content:space-between;gap:10px;margin-bottom:9px}.dsh-mobile-control__stage-header .dsh-mobile-control__section-title{margin:0}.dsh-mobile-control__stage-meta{display:flex;min-width:0;align-items:center;justify-content:flex-end;gap:5px}.dsh-mobile-control__stage-value{max-width:115px;overflow:hidden;color:var(--dsw-alias-label-primary,#16181d);font:650 11px/1.3 system-ui;text-overflow:ellipsis;white-space:nowrap}.dsh-mobile-control__state-badge{flex:none;padding:3px 7px;border-radius:999px;background:var(--dsw-alias-bg-layer-2,#fff);color:var(--dsw-alias-label-secondary,#606873);font:650 11px/1.25 system-ui}.dsh-mobile-control__state-badge.is-ready{background:var(--dsw-alias-state-success-tertiary,#e6f7f0);color:var(--dsw-alias-label-primary,#087454)}.dsh-mobile-control__state-badge.is-busy{background:var(--dsw-alias-state-business-tertiary,#e8f0ff);color:var(--dsw-alias-label-primary,#1d4ed8)}.dsh-mobile-control__state-badge.is-attention{background:var(--dsw-alias-state-warn-tertiary,#fff4dc);color:var(--dsw-alias-label-primary,#935100)}.dsh-mobile-control__remote-workspace>.dsh-mobile-control__status{box-sizing:border-box;margin:0 0 10px;padding:9px 10px;border-radius:10px;background:var(--dsw-alias-bg-layer-2,#fff);font-size:11px;line-height:1.45}.dsh-mobile-control__provider-setup-body{margin:0 0 10px}.dsh-mobile-control__provider-setup-body>.dsh-mobile-control__cpolar-setup{margin:0}.dsh-mobile-control__provider-setup-body>.dsh-mobile-control__cpolar-setup>.dsh-mobile-control__section-title,.dsh-mobile-control__provider-setup-body>.dsh-mobile-control__frp-setup>.dsh-mobile-control__section-title{display:none}.dsh-mobile-control__provider-setup-body>.dsh-mobile-control__details{margin:0;padding:9px 10px;border:1px solid var(--dsw-alias-border-l2,#dbe1e8);border-radius:11px;background:var(--dsw-alias-bg-layer-2,#fff)}.dsh-mobile-control__remote-workspace>.dsh-mobile-control__actions{margin-top:2px}.dsh-mobile-control__remote-workspace>.dsh-mobile-control__qr{margin:10px 0 0}.dsh-mobile-control__remote-workspace>.dsh-mobile-control__manage-row{margin-top:10px;padding-top:10px;border-top:1px solid var(--dsw-alias-border-l2,#e1e5eb)}
 .dsh-mobile-control__frp-overview{display:grid;grid-template-columns:32px minmax(0,1fr);align-items:center;gap:10px;margin:0 0 10px;padding:10px;border:1px solid var(--dsw-alias-state-success-primary,#a9dfc9);border-radius:11px;background:var(--dsw-alias-state-success-tertiary,#edf9f4)}.dsh-mobile-control__frp-overview[hidden]{display:none}.dsh-mobile-control__frp-overview-mark{display:grid;width:32px;height:32px;place-items:center;border-radius:50%;background:#087454;color:#fff;font:700 15px/1 system-ui}.dsh-mobile-control__frp-overview-body{display:flex;min-width:0;flex-direction:column;gap:2px}.dsh-mobile-control__frp-overview-body strong{color:var(--dsw-alias-label-primary,#075d46);font-size:12px;line-height:1.35}.dsh-mobile-control__frp-overview-body span{overflow:hidden;color:var(--dsw-alias-label-secondary,#357061);font:11px/1.4 ui-monospace,SFMono-Regular,Consolas,monospace;text-overflow:ellipsis;white-space:nowrap}.dsh-mobile-control__frp-group{margin:8px 0 0;overflow:hidden;border:1px solid var(--dsw-alias-border-l2,#dbe1e8);border-radius:11px;background:var(--dsw-alias-bg-layer-1,#f8fafc)}.dsh-mobile-control__frp-group>summary{box-sizing:border-box;min-height:44px;padding:12px 34px 10px 12px;color:var(--dsw-alias-label-primary,#16181d);font:650 12px/1.4 system-ui;cursor:pointer}.dsh-mobile-control__frp-group[open]>summary{border-bottom:1px solid var(--dsw-alias-border-l2,#e1e5eb);background:var(--dsw-alias-bg-layer-2,#fff)}.dsh-mobile-control__frp-group>.dsh-mobile-control__frp-step{padding:12px}.dsh-mobile-control__frp-group>.dsh-mobile-control__frp-step>strong:first-child{display:none}.dsh-mobile-control__frp-group .dsh-mobile-control__frp-step{border-top:0}.dsh-mobile-control__frp-setup>.dsh-mobile-control__frp-step{margin-bottom:8px;padding:10px;border:1px solid var(--dsw-alias-border-l2,#dbe1e8);border-radius:11px;background:var(--dsw-alias-bg-layer-1,#f8fafc)}.dsh-mobile-control__tunnel{margin:0 0 10px}.dsh-mobile-control__tunnel[hidden]{display:none}
 .dsh-mobile-control__lan-setup{box-sizing:border-box;margin:0 0 12px;padding:14px;border:1px solid #6f96db;border-radius:15px;background:var(--dsw-alias-bg-layer-1,#f5f8ff)}.dsh-mobile-control__lan-setup[hidden],.dsh-mobile-control__lan-setup-form[hidden]{display:none}.dsh-mobile-control__lan-setup>.dsh-mobile-control__section-title{margin-bottom:5px}.dsh-mobile-control__lan-setup>.dsh-mobile-control__intro{margin-bottom:12px}.dsh-mobile-control__lan-setup-form{display:grid;gap:9px}.dsh-mobile-control__lan-setup .dsh-mobile-control__field select{box-sizing:border-box;width:100%;min-height:44px;padding:9px 32px 9px 10px;border:1px solid var(--dsw-alias-border-l3,#cfd5dd);border-radius:10px;background:var(--dsw-alias-bg-layer-2,#fff);color:var(--dsw-alias-label-primary,#16181d);font:14px/1.4 system-ui}.dsh-mobile-control__lan-setup .dsh-mobile-control__component-note{margin:0}.dsh-mobile-control__lan-setup-actions{display:grid;grid-template-columns:1fr 1.35fr;gap:8px}.dsh-mobile-control__lan-setup-actions button{box-sizing:border-box;min-width:0;min-height:44px;padding:9px 10px;border-radius:10px;font:650 12px/1.3 system-ui;cursor:pointer}.dsh-mobile-control__lan-setup-actions button:disabled{cursor:wait;opacity:.55}.dsh-mobile-control__lan-setup>.dsh-mobile-control__status{margin:10px 0 0;line-height:1.5}.dsh-mobile-control__lan-setup>.dsh-mobile-control__status:empty{display:none}
 .dsh-mobile-control__access{display:flex;align-items:baseline;gap:6px;min-width:0;margin:0 0 12px}.dsh-mobile-control__access[hidden]{display:none}.dsh-mobile-control__access-label{flex:none;color:var(--dsw-alias-label-secondary,#606873);white-space:nowrap}.dsh-mobile-control__access-label::after{content:"："}.dsh-mobile-control__access-link{min-width:0;overflow:hidden;color:var(--dsw-alias-label-primary-bluish,#2563eb);text-decoration:none;text-overflow:ellipsis;white-space:nowrap}.dsh-mobile-control__access-link:hover{text-decoration:underline}.dsh-mobile-control__qr{display:flex;justify-content:center;margin:0 0 12px}.dsh-mobile-control__qr[hidden]{display:none}.dsh-mobile-control__qr img{border-radius:12px;background:#fff;padding:8px}

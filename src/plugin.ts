@@ -53,7 +53,18 @@ import {
   type CloudflaredTunnelStatus,
 } from './cloudflared-tunnel.js'
 import { FrpComponentManager, type FrpComponentStatus } from './frp-component.js'
-import { FrpConfigStore, mergeSavedFrpSettings, mergeSavedFrpTarget, type FrpConfigurationStatus } from './frp-config.js'
+import {
+  FrpConfigStore,
+  isFrpSelfSignedIngress,
+  mergeSavedFrpSettings,
+  mergeSavedFrpTarget,
+  resolveFrpPublicPort,
+  resolveFrpVhostHttpPort,
+  type FrpConfigurationStatus,
+  type FrpSettings,
+} from './frp-config.js'
+import { createFrpAttachTemplate } from './frp-attach.js'
+import { createFrpAttachPlan } from './frp-attach-plan.js'
 import { FrpController } from './frp.js'
 import { OriginConfigStore, parseOriginSettings, validateOriginListenPort, type OriginConfigurationStatus, type OriginSettings } from './origin-proxy-config.js'
 import { OriginController } from './origin-proxy.js'
@@ -164,6 +175,12 @@ function mapAdminError(error: unknown): HttpError {
     'frp_public_origin_invalid',
     'frp_settings_invalid',
   ].includes(error.message)) return new HttpError(400, error.message)
+  // Attach-mode codes are environment/precondition conflicts by design:
+  // `frp_attach_mode_requires_vhost_port` (the user's frps port is unknown),
+  // `frp_attach_cert_unknown` (the ingress certificate is missing or unusable),
+  // and `frp_entry_tls_invalid` (the requested entry mode cannot be provisioned)
+  // all map to 409 here, while a reachable plaintext vhost keeps the upstream
+  // `frp_vhost_publicly_reachable` / `frp_vhost_probe_failed` codes.
   if (error instanceof Error && error.message.startsWith('frp_')) {
     return new HttpError(409, error.message)
   }
@@ -867,6 +884,21 @@ export async function apply(ctx: Context, config: PluginConfig): Promise<void> {
             if (remoteControllers.frp.status().enabled) await remoteControllers.frp.reconnect()
           })
           sendJson(response, 200, remotePayload(), false)
+          return
+        }
+        if (request.method === 'POST' && target.decodedPathname === `${LOCAL_ADMIN_PREFIX}/remote/frp/attach-plan`) {
+          const body = await readJsonObject(request, 8192)
+          // Read-only preview: blank fields keep their saved values, and nothing
+          // on the VPS or the local filesystem is touched.
+          const settings = mergeSavedFrpSettings(body, frpConfig.settings())
+          const options = { configFile: frpConfig.runtimeConfigFile }
+          logger.info('frp attach plan requested mode=%s entryTls=%s vhostHttpPort=%d',
+            settings.mode ?? 'deploy', settings.entryTls ?? 'public-ip-cert', resolveFrpVhostHttpPort(settings))
+          sendJson(response, 200, {
+            ...remotePayload(),
+            frpAttachPlan: createFrpAttachPlan(settings, options),
+            frpAttachTemplate: createFrpAttachTemplate(settings, options),
+          }, false)
           return
         }
         if (request.method === 'GET' && target.decodedPathname === `${LOCAL_ADMIN_PREFIX}/remote/websocket-paths`) {

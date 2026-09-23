@@ -110,3 +110,53 @@ describe('restricted FRP configuration', () => {
     await expect(lstat(store.settingsFile)).rejects.toMatchObject({ code: 'ENOENT' })
   })
 })
+
+describe('attach mode and entry TLS settings', () => {
+  it('keeps every new field optional and rejects unknown keys as before', () => {
+    // Optional means a legacy configuration parses into the identical object.
+    expect(parseFrpSettings(input)).toEqual({ version: 1, ...input })
+    expect(parseFrpSettings(input)).not.toHaveProperty('mode')
+    expect(parseFrpSettings({ ...input, mode: 'attach', vhostHttpPort: 8080 })).toMatchObject({
+      mode: 'attach', vhostHttpPort: 8080,
+    })
+    expect(parseFrpSettings({ ...input, mode: 'deploy', entryTls: 'public-ip-cert' })).toMatchObject({
+      mode: 'deploy', entryTls: 'public-ip-cert',
+    })
+    expect(parseFrpSettings({ ...input, publicPort: 33_080 }).publicPort).toBe(33_080)
+    expect(() => parseFrpSettings({ ...input, mode: 'tunnel' })).toThrow('frp_settings_invalid')
+    expect(() => parseFrpSettings({ ...input, entryTls: 'letsencrypt' })).toThrow('frp_entry_tls_invalid')
+    expect(() => parseFrpSettings({ ...input, vhostHttpPort: 0 })).toThrow('frp_settings_invalid')
+    expect(() => parseFrpSettings({ ...input, vhostHttpPort: 65_536 })).toThrow('frp_settings_invalid')
+    expect(() => parseFrpSettings({ ...input, vhostHttpPort: 8080.5 })).toThrow('frp_settings_invalid')
+    // The public entry may never collide with the DSH web, gateway, or origin ports.
+    for (const reserved of [3080, 3443, 3444]) {
+      expect(() => parseFrpSettings({ ...input, publicPort: reserved })).toThrow('frp_settings_invalid')
+    }
+    expect(() => parseFrpSettings({ ...input, unknownKey: 1 })).toThrow('frp_settings_invalid')
+  })
+
+  it('requires the real vhost port in attach mode unless the vhost is removed', () => {
+    // Guessing 7080 for someone else's frps would disarm the exposure gate.
+    expect(() => parseFrpSettings({ ...input, mode: 'attach' })).toThrow('frp_attach_mode_requires_vhost_port')
+    expect(parseFrpSettings({ ...input, mode: 'attach', vhostHttpPort: 8080 }).vhostHttpPort).toBe(8080)
+    // The self-signed entry publishes raw TCP, so there is no vhost to declare.
+    expect(parseFrpSettings({ ...input, mode: 'attach', entryTls: 'self-signed' }).entryTls).toBe('self-signed')
+    // Deploy mode never installs a TCP passthrough to someone else's gateway.
+    expect(() => parseFrpSettings({ ...input, entryTls: 'self-signed' })).toThrow('frp_entry_tls_invalid')
+    expect(() => parseFrpSettings({ ...input, mode: 'deploy', entryTls: 'self-signed' })).toThrow('frp_entry_tls_invalid')
+  })
+
+  it('carries the new fields through the saved-configuration merge', () => {
+    const saved = parseFrpSettings({ ...input, mode: 'attach', vhostHttpPort: 8080, publicPort: 34_443 })
+    expect(mergeSavedFrpSettings({ ...input }, saved)).toMatchObject({
+      mode: 'attach', vhostHttpPort: 8080, publicPort: 34_443,
+    })
+    expect(mergeSavedFrpSettings({ serverAddress: '', serverPort: Number.NaN, token: '', publicOrigin: '' }, saved))
+      .toMatchObject({ mode: 'attach', vhostHttpPort: 8080 })
+    // A switch back to the managed deployment must be explicit, not implied by a blank.
+    expect(mergeSavedFrpSettings({ ...input, mode: 'deploy', entryTls: 'public-ip-cert', vhostHttpPort: 7080 }, saved))
+      .toMatchObject({ mode: 'deploy', entryTls: 'public-ip-cert' })
+    expect(mergeSavedFrpSettings({ ...input, mode: 'attach', vhostHttpPort: 9090 }, saved).vhostHttpPort).toBe(9090)
+    expect(mergeSavedFrpSettings({ ...input, mode: 'attach', vhostHttpPort: 9090 }, saved).mode).toBe('attach')
+  })
+})
