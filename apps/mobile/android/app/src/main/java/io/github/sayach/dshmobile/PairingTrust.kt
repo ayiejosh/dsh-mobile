@@ -25,6 +25,33 @@ internal object PairingTrust {
         certificate.encoded
     }.getOrNull()
 
+    /**
+     * Select the TLS trust anchor for one pairing attempt, or `null` when the gateway identity
+     * cannot be verified against the fingerprint carried by the pairing key.
+     *
+     * A LAN gateway always serves its pairing CA, so a missing or unverifiable CA fails the
+     * attempt. A remote gateway serves one only for the self-signed passthrough entry; an entry
+     * with a publicly trusted certificate answers 404 for `/mobile-access/ca.cer` and keeps the
+     * platform trust store — `null` bytes with a non-null instance id — which is the unchanged
+     * behaviour for every public remote relay.
+     *
+     * @param mode the transport the user selected for this attempt.
+     * @param instanceId the SHA-256 fingerprint carried by the scanned pairing key.
+     * @param fetchCa reads `/mobile-access/ca.cer` over the re-trust bootstrap channel.
+     */
+    fun selectTrustAnchor(
+        mode: AccessMode,
+        instanceId: String,
+        fetchCa: () -> ByteArray?,
+    ): Pair<ByteArray?, String?>? = when (mode) {
+        AccessMode.LAN -> fetchCa()?.let { ca -> validateCertificate(ca, instanceId)?.let { it to instanceId } }
+        AccessMode.REMOTE -> {
+            val decision = RemotePairingTrust.decide(fetchCa(), instanceId)
+            if (decision.anchor == PairingTrustAnchor.IDENTITY_MISMATCH) null
+            else decision.caCertificate to instanceId
+        }
+    }
+
     /** SHA-256 fingerprint of the DER certificate, lowercase hex as used by the gateway. */
     fun fingerprint(certificate: X509Certificate): String =
         MessageDigest.getInstance("SHA-256").digest(certificate.encoded)
