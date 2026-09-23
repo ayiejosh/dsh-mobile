@@ -1,5 +1,11 @@
 import { describe, expect, it, vi } from 'vitest'
-import { collectConnectionDiagnostics, remoteDiagnosticTimeoutMs, type DiagnosticSnapshot } from '../src/diagnostics.js'
+import {
+  collectConnectionDiagnostics,
+  configuredProxyFor,
+  probeRemoteHealth,
+  remoteDiagnosticTimeoutMs,
+  type DiagnosticSnapshot,
+} from '../src/diagnostics.js'
 
 const healthy: DiagnosticSnapshot = {
   dshVersion: '0.1.1-rc.2',
@@ -134,5 +140,85 @@ describe('connection diagnostics', () => {
         action: expect.stringContaining('cpolar'),
       }),
     ]))
+  })
+})
+
+describe('remote reachability relay fallback', () => {
+  const funnelOrigin = 'https://example.tail1234.ts.net'
+  /** The relay addresses this machine actually configures in the environment. */
+  const relayEnv = { HTTP_PROXY: 'http://127.0.0.1:7897' } satisfies NodeJS.ProcessEnv
+  const directGone = async (): Promise<{ state: 'unreachable' }> => ({ state: 'unreachable' })
+
+  it('picks the configured relay unless NO_PROXY covers the target', () => {
+    expect(configuredProxyFor(funnelOrigin, { HTTPS_PROXY: 'http://relay:7897', ALL_PROXY: 'http://all:1', HTTP_PROXY: 'http://generic:2' })?.host).toBe('relay:7897')
+    expect(configuredProxyFor(funnelOrigin, { https_proxy: 'http://relay:7897' })?.host).toBe('relay:7897')
+    expect(configuredProxyFor(funnelOrigin, { HTTP_PROXY: 'http://relay:7897' })?.host).toBe('relay:7897')
+    expect(configuredProxyFor(funnelOrigin, {})).toBeUndefined()
+    expect(configuredProxyFor(funnelOrigin, { HTTPS_PROXY: 'socks5://relay:1080' })).toBeUndefined()
+  })
+
+  it('honors NO_PROXY without losing the localhost exclusions this machine sets', () => {
+    const env = { HTTP_PROXY: 'http://127.0.0.1:7897', NO_PROXY: 'localhost,127.0.0.1,::1' }
+    expect(configuredProxyFor(funnelOrigin, env)?.host).toBe('127.0.0.1:7897')
+    expect(configuredProxyFor(funnelOrigin, { ...env, NO_PROXY: 'ts.net' })).toBeUndefined()
+    expect(configuredProxyFor(funnelOrigin, { ...env, NO_PROXY: '.tail1234.ts.net' })).toBeUndefined()
+    expect(configuredProxyFor(funnelOrigin, { HTTP_PROXY: 'http://127.0.0.1:7897', NO_PROXY: '*' })).toBeUndefined()
+    expect(configuredProxyFor('https://private-name.r8.cpolar.cn', { HTTP_PROXY: 'http://127.0.0.1:7897', NO_PROXY: 'ts.net' })?.host).toBe('127.0.0.1:7897')
+  })
+
+  it('answers ready through the relay when the direct hairpin cannot', async () => {
+    const tunnel = vi.fn(async () => ({ status: 200, latencyMs: 96 }))
+    const observation = await probeRemoteHealth(funnelOrigin, { env: relayEnv, direct: directGone, tunnel })
+    expect(observation).toEqual({ state: 'ready', latencyMs: 96, viaProxy: true })
+    expect(tunnel).toHaveBeenCalledOnce()
+  })
+
+  it('threads the relay egress into the localized remote-ready facts', async () => {
+    const result = await collectConnectionDiagnostics(healthy, {
+      firewall: async () => ({ state: 'ready' }),
+      remote: async () => ({ state: 'ready', latencyMs: 8, viaProxy: true }),
+    })
+    expect(result.checks).toEqual(expect.arrayContaining([
+      expect.objectContaining({
+        id: 'remote',
+        status: 'ok',
+        reason: 'remote-ready',
+        facts: { provider: 'cpolar', endpointSuffix: '*.cpolar.cn', latencyMs: 8, viaProxy: true },
+      }),
+    ]))
+  })
+
+  it('keeps the direct failure when the relay refuses, times out, or is not configured', async () => {
+    const refused = vi.fn(async () => ({ status: 502, latencyMs: 4 }))
+    expect(await probeRemoteHealth(funnelOrigin, { env: relayEnv, direct: directGone, tunnel: refused })).toEqual({ state: 'unreachable' })
+    const threw = vi.fn(async () => { throw new Error('proxy_tunnel_closed') })
+    expect(await probeRemoteHealth(funnelOrigin, { env: relayEnv, direct: directGone, tunnel: threw })).toEqual({ state: 'unreachable' })
+    const unused = vi.fn(async () => ({ status: 200, latencyMs: 1 }))
+    expect(await probeRemoteHealth(funnelOrigin, { env: { NO_PROXY: '*' }, direct: directGone, tunnel: unused })).toEqual({ state: 'unreachable' })
+    expect(unused).not.toHaveBeenCalled()
+  })
+
+  it('maps a relay-side throttling answer without inventing a readiness claim', async () => {
+    const observation = await probeRemoteHealth(funnelOrigin, {
+      env: relayEnv,
+      direct: directGone,
+      tunnel: async () => ({ status: 429, latencyMs: 17 }),
+    })
+    expect(observation).toEqual({ state: 'rate-limited', latencyMs: 17, viaProxy: true })
+  })
+
+  it('preserves the Fake-IP verdict when both the direct and relay attempts fail', async () => {
+    const observation = await probeRemoteHealth(funnelOrigin, {
+      env: relayEnv,
+      direct: async () => ({ state: 'unreachable' as const, fakeIp: true }),
+      tunnel: async () => { throw new Error('proxy_tunnel_timeout') },
+    })
+    expect(observation).toEqual({ state: 'unreachable', fakeIp: true })
+  })
+
+  it('leaves absent origins and probe answers untouched', async () => {
+    expect(await probeRemoteHealth(undefined)).toEqual({ state: 'not-applicable' })
+    const direct = async (): Promise<{ state: 'ready'; latencyMs: number }> => ({ state: 'ready', latencyMs: 3 })
+    expect(await probeRemoteHealth(funnelOrigin, { env: relayEnv, direct, tunnel: async () => ({ status: 200, latencyMs: 9 }) })).toEqual({ state: 'ready', latencyMs: 3 })
   })
 })
