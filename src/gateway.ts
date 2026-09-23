@@ -178,6 +178,26 @@ const MOBILE_LAYOUT_DEPENDENCY_PROFILES = Object.freeze([
 const MOBILE_CSRF_FETCH_BOOTSTRAP = `(()=>{const nativeFetch=window.fetch.bind(window);window.fetch=(input,init)=>{const source=input instanceof Request?input:undefined;const method=String(init?.method??source?.method??'GET').toUpperCase();if(method==='GET'||method==='HEAD')return nativeFetch(input,init);const raw=typeof input==='string'?input:input instanceof URL?input.href:source?.url;if(raw===undefined||new URL(raw,location.href).origin!==location.origin)return nativeFetch(input,init);const headers=new Headers(init?.headers??source?.headers);if(!headers.has(${JSON.stringify(CSRF_HEADER)})){const prefix=${JSON.stringify(`${CSRF_COOKIE}=`)};const token=document.cookie.split(';').map(value=>value.trim()).find(value=>value.startsWith(prefix))?.slice(prefix.length);if(token!==undefined)headers.set(${JSON.stringify(CSRF_HEADER)},token)}return nativeFetch(input,{...init,headers})};})();`
 // Paired pages use the gateway's authenticated HTTP carrier; streams retain DSH's WebSocket transport.
 const MOBILE_AUTHENTICATED_TRANSPORT_BOOTSTRAP = `(()=>{if(window.__DSH_TRANSPORT__!==undefined)throw new Error('DSH Mobile cannot replace an existing transport override');window.__DSH_TRANSPORT__={fetch:(input,init)=>window.fetch(input,init),ownsHost:true}})();`
+/**
+ * Decouple the served page's reachability from the browser's internet signal.
+ *
+ * `navigator.onLine` reports whether the OS believes the *default* network
+ * reaches the public internet, which is not the same question as "can this page
+ * reach its gateway". A tablet on a LAN whose router has no upstream, entering
+ * or leaving doze, or re-validating Wi-Fi reports `offline` while every request
+ * to the gateway still succeeds. DSH's connection layer consumes that signal
+ * directly and, on `offline`, publishes `disconnected` *and suspends automatic
+ * retries* — so a false reading tears down a healthy connection and leaves the
+ * page waiting for an `online` event that may never come.
+ *
+ * Pinning availability to `true` removes only that false negative; a genuinely
+ * dropped carrier still loses its WebSocket, and the connection layer recovers
+ * it through the normal backoff (`connecting`). The capture-phase blocker is
+ * registered while this boot script is parsed, so it precedes every listener
+ * the client plugins add later and wins the registration-order race that
+ * governs the window-targeted `offline` event.
+ */
+const MOBILE_GATEWAY_REACHABILITY_BOOTSTRAP = `(()=>{const view=globalThis;const port=view.navigator;if(port!==undefined&&typeof Object.defineProperty==='function'){try{Object.defineProperty(port,'onLine',{configurable:true,get:()=>true})}catch{/* A frozen navigator keeps its own answer; the capture blocker below still applies. */}}if(typeof view.addEventListener==='function'){view.addEventListener('offline',event=>{event.stopImmediatePropagation()},true)}})();`
 const PAIR_PAGE = `<!doctype html>
 <html lang="en">
 <meta charset="utf-8">
@@ -467,7 +487,7 @@ function rewriteMobileIndexWithBatch(
     plan.parsed.rev = createHash('sha256').update(JSON.stringify({ entries: plan.entries, batches: plan.batches })).digest('hex').slice(0, 16)
   }
   const transportBootstrap = remoteSettings ? MOBILE_AUTHENTICATED_TRANSPORT_BOOTSTRAP : ''
-  const replacement = `${transportBootstrap}${MOBILE_CSRF_FETCH_BOOTSTRAP}window.__DSH_MOBILE_FRONTEND__="dedicated";${plan.assignment}${JSON.stringify(plan.parsed)};`
+  const replacement = `${MOBILE_GATEWAY_REACHABILITY_BOOTSTRAP}${transportBootstrap}${MOBILE_CSRF_FETCH_BOOTSTRAP}window.__DSH_MOBILE_FRONTEND__="dedicated";${plan.assignment}${JSON.stringify(plan.parsed)};`
   return Object.freeze({
     html: ensureMobileViewport(ensureMobileCompatibility(`${html.slice(0, plan.replaceStart)}${replacement}${html.slice(plan.replaceEnd)}`)),
     batches,

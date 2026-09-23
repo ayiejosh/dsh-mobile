@@ -1,5 +1,10 @@
 import { execFileText as execFile } from './exec-file.js'
 import { lookup } from 'node:dns/promises'
+import type { IncomingMessage } from 'node:http'
+import { request as proxyRequest } from 'node:http'
+import type { Socket } from 'node:net'
+import type { TLSSocket } from 'node:tls'
+import { connect as tlsConnect } from 'node:tls'
 
 import type { RemoteProvider } from './remote.js'
 import { DSH_MOBILE_VERSION, MINIMUM_ANDROID_APP_VERSION } from './version.js'
@@ -20,6 +25,8 @@ export interface DiagnosticFacts {
   readonly interfaceName?: string
   readonly endpointSuffix?: string
   readonly controllerCode?: string
+  /** The reachability answer came from the machine's configured relay egress. */
+  readonly viaProxy?: boolean
 }
 
 /** One user-facing diagnostic result with stable localization data and server fallback copy. */
@@ -62,6 +69,7 @@ interface RemoteObservation {
   readonly state: 'ready' | 'rate-limited' | 'unreachable' | 'not-applicable'
   readonly latencyMs?: number
   readonly fakeIp?: boolean
+  readonly viaProxy?: boolean
 }
 
 /** Injectable probes keep diagnostics deterministic in tests. */
@@ -208,32 +216,240 @@ export function remoteDiagnosticTimeoutMs(origin: string): number {
   return 10_000
 }
 
-async function defaultRemoteProbe(origin: string | undefined): Promise<RemoteObservation> {
-  if (origin === undefined) return { state: 'not-applicable' }
-  const hostname = new URL(origin).hostname
+interface RemoteHealthObservation {
+  readonly status: number
+  readonly latencyMs: number
+}
+
+/** One tunnel attempt through the machine's configured HTTP relay egress. */
+export type ProxyHealthTunnel = (target: URL, proxy: URL) => Promise<RemoteHealthObservation>
+
+/** Raw observation from the direct (default) path, checked before any relay. */
+export type DirectHealthProbe = (target: URL) => Promise<RemoteObservation>
+
+const TUNNEL_HEADER_LIMIT_BYTES = 64 * 1024
+
+function proxyExcludedByNoProxy(hostname: string, raw: string): boolean {
+  const text = raw.trim().toLowerCase()
+  if (text === '') return false
+  const host = hostname.startsWith('[') && hostname.endsWith(']') ? hostname.slice(1, -1) : hostname
+  for (const entry of text.split(/[\s,]+/)) {
+    let value = entry
+    if (value.startsWith('.')) value = value.slice(1)
+    if (value === '') continue
+    if (value === '*') return true
+    // Network-range and port-carrying entries are filters the suffix rule cannot
+    // represent; skip them rather than widening the exclusion.
+    if (value.includes('/') || value.includes(':')) continue
+    if (host === value || host.endsWith(`.${value}`)) return true
+  }
+  return false
+}
+
+/**
+ * Resolve the relay egress configured in the environment for `origin`.
+ *
+ * Honors `HTTPS_PROXY` (then `ALL_PROXY`, then the generic `HTTP_PROXY`) for an
+ * HTTPS target, and `http_proxy`/`HTTP_PROXY`/`ALL_PROXY` for a plain one, unless
+ * `NO_PROXY`/`no_proxy` covers the host. Only a plain `http://<host>:<port>`
+ * relay is usable: SOCKS or a TLS-to-proxy configuration would need a different
+ * tunnel, so absent that the probe keeps its direct semantics.
+ */
+export function configuredProxyFor(origin: string, env: NodeJS.ProcessEnv = process.env): URL | undefined {
+  let target: URL
+  try {
+    target = new URL(origin)
+  } catch {
+    return undefined
+  }
+  const hostname = target.hostname.toLowerCase()
+  if (proxyExcludedByNoProxy(hostname, env.NO_PROXY ?? env.no_proxy ?? '')) return undefined
+  const isHttps = target.protocol === 'https:'
+  const candidates = isHttps
+    ? [env.https_proxy ?? env.HTTPS_PROXY, env.all_proxy ?? env.ALL_PROXY, env.http_proxy ?? env.HTTP_PROXY]
+    : [env.http_proxy ?? env.HTTP_PROXY, env.all_proxy ?? env.ALL_PROXY]
+  for (const candidate of candidates) {
+    if (typeof candidate !== 'string' || candidate.trim() === '') continue
+    try {
+      const proxy = new URL(candidate.trim())
+      if (proxy.protocol !== 'http:' || proxy.hostname === '') continue
+      return proxy
+    } catch {
+      continue
+    }
+  }
+  return undefined
+}
+
+/** One reachability probe through an HTTP relay: CONNECT, TLS, then a status line. */
+export async function relayProbeThroughProxy(target: URL, proxy: URL): Promise<RemoteHealthObservation> {
+  const started = performance.now()
+  const budgetMs = remoteDiagnosticTimeoutMs(target.origin)
+  return new Promise<RemoteHealthObservation>((resolve, reject) => {
+    let settled = false
+    let rawSocket: Socket | undefined
+    let secureSocket: TLSSocket | undefined
+    let timer: NodeJS.Timeout | undefined
+    const finish = (outcome: { readonly value?: RemoteHealthObservation; readonly error?: Error }): void => {
+      if (settled) return
+      settled = true
+      clearTimeout(timer)
+      secureSocket?.destroy()
+      rawSocket?.destroy()
+      if (outcome.error !== undefined) reject(outcome.error)
+      else resolve(outcome.value ?? { status: 0, latencyMs: 0 })
+    }
+    timer = setTimeout(() => { finish({ error: new Error('proxy_tunnel_timeout') }) }, Math.max(1, budgetMs))
+    timer.unref()
+    // The CONNECT target must always carry an explicit port: a bare hostname is
+    // resolved by the relay against its own default (port 80), which answers
+    // plaintext and breaks the TLS handshake with a wrong-version error.
+    const hopPort = target.port === '' ? (target.protocol === 'https:' ? 443 : 80) : Number(target.port)
+    const hopPath = `${target.hostname}:${hopPort}`
+    const headers: Record<string, string> = { host: hopPath, 'proxy-connection': 'keep-alive' }
+    if (proxy.username !== '') {
+      headers['proxy-authorization'] = `Basic ${Buffer.from(
+        `${decodeURIComponent(proxy.username)}:${decodeURIComponent(proxy.password)}`,
+        'utf8',
+      ).toString('base64')}`
+    }
+    const hopRequest = proxyRequest({
+      host: proxy.hostname,
+      port: proxy.port === '' ? 80 : Number(proxy.port),
+      method: 'CONNECT',
+      path: hopPath,
+      headers,
+      agent: false,
+    })
+    hopRequest.once('connect', (response: IncomingMessage, socket: Socket) => {
+      if (response.statusCode !== 200) {
+        finish({ error: new Error(`proxy_tunnel_rejected_${response.statusCode ?? 'unknown'}`) })
+        return
+      }
+      rawSocket = socket
+      const secure = tlsConnect({
+        socket,
+        servername: target.hostname,
+        rejectUnauthorized: true,
+      })
+      secureSocket = secure
+      secure.once('secureConnect', () => {
+        if (settled) return
+        secure.write([
+          `GET ${target.pathname}${target.search} HTTP/1.1`,
+          `Host: ${target.host}`,
+          'User-Agent: dsh-mobile-diagnostics',
+          'Accept-Encoding: identity',
+          'Connection: close',
+          '',
+          '',
+        ].join('\r\n'))
+      })
+      let buffered = Buffer.alloc(0)
+      secure.on('data', (chunk: Buffer) => {
+        buffered = Buffer.concat([buffered, chunk])
+        if (buffered.byteLength > TUNNEL_HEADER_LIMIT_BYTES) {
+          finish({ error: new Error('proxy_tunnel_oversized_response') })
+          return
+        }
+        const end = buffered.indexOf('\r\n\r\n')
+        if (end < 0) return
+        const statusLine = /^HTTP\/\d(?:\.\d)?\s+(\d{3})/u.exec(buffered.subarray(0, end).toString('latin1'))?.[1]
+        const status = Number.parseInt(statusLine ?? '', 10)
+        if (!Number.isSafeInteger(status) || status < 100) {
+          finish({ error: new Error('proxy_tunnel_invalid_response') })
+          return
+        }
+        finish({ value: { status, latencyMs: Math.max(0, Math.round(performance.now() - started)) } })
+      })
+      secure.once('error', (error: Error) => { finish({ error }) })
+      secure.once('close', () => { finish({ error: new Error('proxy_tunnel_closed') }) })
+    })
+    hopRequest.once('error', (error: Error) => { finish({ error }) })
+    hopRequest.end()
+  })
+}
+
+/** Bounded supplementary DNS context for a failed direct attempt. */
+async function unreachableWithDnsContext(hostname: string): Promise<RemoteObservation> {
+  let fakeIp = false
+  try {
+    const addresses = await lookup(hostname, { all: true })
+    fakeIp = addresses.some(({ address }) => {
+      const [first, second] = address.split('.').map(Number)
+      return first === 198 && (second === 18 || second === 19)
+    })
+  } catch {
+    // DNS lookup is supplementary; the failed HTTPS probe remains authoritative.
+  }
+  return { state: 'unreachable', ...(fakeIp ? { fakeIp: true } : {}) }
+}
+
+async function fetchRemoteHealth(target: URL, budgetMs: number): Promise<RemoteObservation> {
   const started = performance.now()
   try {
-    const response = await fetch(new URL('/mobile-access/health', origin), {
+    const response = await fetch(target, {
       cache: 'no-store',
       redirect: 'error',
-      signal: AbortSignal.timeout(remoteDiagnosticTimeoutMs(origin)),
+      signal: AbortSignal.timeout(budgetMs),
     })
     const latencyMs = Math.max(0, Math.round(performance.now() - started))
     if (response.status === 429) return { state: 'rate-limited', latencyMs }
     return response.ok ? { state: 'ready', latencyMs } : { state: 'unreachable', latencyMs }
   } catch {
-    let fakeIp = false
-    try {
-      const addresses = await lookup(hostname, { all: true })
-      fakeIp = addresses.some(({ address }) => {
-        const [first, second] = address.split('.').map(Number)
-        return first === 198 && (second === 18 || second === 19)
-      })
-    } catch {
-      // DNS lookup is supplementary; the failed HTTPS probe remains authoritative.
-    }
-    return { state: 'unreachable', ...(fakeIp ? { fakeIp: true } : {}) }
+    return unreachableWithDnsContext(target.hostname)
   }
+}
+
+/** Explicit test seams: environment, the direct attempt, and the relay attempt. */
+export interface RemoteHealthProbeOptions {
+  readonly env?: NodeJS.ProcessEnv
+  readonly direct?: DirectHealthProbe
+  readonly tunnel?: ProxyHealthTunnel
+}
+
+/**
+ * Answer "is the public endpoint reachable" from the machine's own egress.
+ *
+ * A direct attempt stays authoritative first. When it fails and the environment
+ * configures an HTTP relay that `NO_PROXY` does not exclude, one tunnelled
+ * attempt runs: a self-managed Funnel origin otherwise resolves to this
+ * machine's tailnet address, where nothing serves the funnel port locally, so
+ * the direct measurement reports an outage while the relay's egress — the same
+ * public path a phone takes — still succeeds. When both fail, the original
+ * direct observation (including its Fake-IP context) stands unchanged.
+ */
+export async function probeRemoteHealth(
+  origin: string | undefined,
+  options: RemoteHealthProbeOptions = {},
+): Promise<RemoteObservation> {
+  if (origin === undefined) return { state: 'not-applicable' }
+  let target: URL
+  try {
+    target = new URL('/mobile-access/health', origin)
+  } catch {
+    return { state: 'not-applicable' }
+  }
+  const budgetMs = remoteDiagnosticTimeoutMs(origin)
+  const direct = options.direct ?? ((probeTarget: URL) => fetchRemoteHealth(probeTarget, budgetMs))
+  const observation = await direct(target)
+  if (observation.state !== 'unreachable') return observation
+  const relay = configuredProxyFor(origin, options.env ?? process.env)
+  if (relay === undefined) return observation
+  const tunnel = options.tunnel ?? relayProbeThroughProxy
+  try {
+    const { status, latencyMs } = await tunnel(target, relay)
+    if (status === 429) return { state: 'rate-limited', latencyMs, viaProxy: true }
+    return status >= 200 && status < 300
+      ? { state: 'ready', latencyMs, viaProxy: true }
+      : observation
+  } catch {
+    return observation
+  }
+}
+
+async function defaultRemoteProbe(origin: string | undefined): Promise<RemoteObservation> {
+  return probeRemoteHealth(origin)
 }
 
 function reportLine(entry: DiagnosticCheck): string {
@@ -304,7 +520,12 @@ export async function collectConnectionDiagnostics(
       { provider: 'origin' }))
   } else if (snapshot.remote.state === 'ready' && snapshot.remote.origin !== undefined) {
     const endpointSuffix = remoteSuffix(snapshot.remote.origin)
-    const facts = { provider: snapshot.remote.provider, endpointSuffix, ...(remoteObservation.latencyMs === undefined ? {} : { latencyMs: remoteObservation.latencyMs }) }
+    const facts = {
+      provider: snapshot.remote.provider,
+      endpointSuffix,
+      ...(remoteObservation.latencyMs === undefined ? {} : { latencyMs: remoteObservation.latencyMs }),
+      ...(remoteObservation.viaProxy === true ? { viaProxy: true as const } : {}),
+    }
     if (remoteObservation.state === 'ready') {
       checks.push(check('remote', 'ok', 'remote-ready', '远程通道', `${snapshot.remote.provider} 公共地址 ${endpointSuffix} 可达，往返约 ${String(remoteObservation.latencyMs ?? 0)} ms。`, undefined, facts))
     } else if (remoteObservation.state === 'rate-limited') {
