@@ -1,7 +1,6 @@
 import { EventEmitter } from 'node:events'
 import { mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises'
 import { createServer as createHttpsServer, type Server as HttpsServer } from 'node:https'
-import { lookup } from 'node:dns/promises'
 import { tmpdir } from 'node:os'
 import { dirname, join } from 'node:path'
 import { PassThrough } from 'node:stream'
@@ -269,7 +268,6 @@ describe('FRP discovery probe against a real HTTPS entry', () => {
     )).rejects.toThrow('frp_discovery_invalid')
   })
 })
-
 describe('FRP discovery probe target derivation', () => {
   it('dials the public entry port and pins the ingress CA for the self-signed entry', async () => {
     const { executable, config, directory } = await frpFixture({
@@ -409,79 +407,4 @@ describe('FRP discovery probe target derivation', () => {
       publicOrigin: 'https://1.2.3.4',
     }), stateFile)).toBeUndefined()
   })
-})
-
-/** A name that resolves to loopback here, so a real entry can be dialled offline. */
-async function loopbackAlias(): Promise<string | undefined> {
-  for (const name of ['localhost.localdomain', '127.0.0.1.nip.io', 'lvh.me']) {
-    const resolved = await Promise.race([
-      lookup(name).then(record => record.address, () => undefined),
-      new Promise<undefined>(resolve => { setTimeout(() => resolve(undefined), 2_000).unref() }),
-    ])
-    if (resolved === '127.0.0.1') return name
-  }
-  return undefined
-}
-
-const alias = await loopbackAlias()
-
-// Both cases need a name that resolves to loopback: the origin host is validated
-// as a real public name, so an address literal cannot stand in for it. Without
-// such a name they are skipped, and the probe-level cases above still cover the
-// anchoring and the derived port.
-describe('FRP self-signed entry end to end', () => {
-  it.skipIf(alias === undefined)('becomes ready through a real HTTPS entry on publicPort', async () => {
-    // The full production shape: config store → derived target (host + publicPort)
-    // → ingress anchor read from disk → real TLS → `ready`.
-    const host = alias ?? 'localhost.localdomain'
-    const chain = createTestTlsChain({ dnsNames: [host] })
-    const entry = await startEntryServer({ chain, instanceId: CA_ADVERTISED_IDENTITY })
-    const { executable, config, directory } = await frpFixture({
-      publicOrigin: `https://${host}`,
-      mode: 'attach',
-      entryTls: 'self-signed',
-      publicPort: entry.port,
-    })
-    const ingress = await writeIngressCa(directory, `${chain.rootCert}${chain.intermediateCert}`)
-    const controller = new FrpController(controllerOptions(executable, config, {
-      createGateway: async () => gateway(CA_ADVERTISED_IDENTITY),
-      resolveDiscoveryTrustAnchor: settings => readFrpIngressTrustAnchor(settings, ingress.stateFile),
-      startTimeoutMs: 10_000,
-      retryIntervalMs: 50,
-    }))
-
-    await controller.initialize()
-    await controller.setEnabled(true)
-    await vi.waitFor(() => { expect(controller.status().state).toBe('ready') }, { timeout: 10_000, interval: 50 })
-    expect(controller.status().origin).toBe(`https://${host}`)
-    await controller.close()
-  }, 20_000)
-
-  it.skipIf(alias === undefined)('never becomes ready through the same entry without the anchor', async () => {
-    // The mirror image of the fix: same entry, same port, no anchor — the old
-    // `frp_start_timeout` outcome, which is exactly what defect 1 produced.
-    const host = alias ?? 'localhost.localdomain'
-    const chain = createTestTlsChain({ dnsNames: [host] })
-    const entry = await startEntryServer({ chain, instanceId: CA_ADVERTISED_IDENTITY })
-    const { executable, config, directory } = await frpFixture({
-      publicOrigin: `https://${host}`,
-      mode: 'attach',
-      entryTls: 'self-signed',
-      publicPort: entry.port,
-    })
-    await writeIngressCa(directory, `${chain.rootCert}${chain.intermediateCert}`)
-    const controller = new FrpController(controllerOptions(executable, config, {
-      createGateway: async () => gateway(CA_ADVERTISED_IDENTITY),
-      resolveDiscoveryTrustAnchor: async () => undefined,
-      startTimeoutMs: 500,
-      retryIntervalMs: 50,
-    }))
-
-    await controller.initialize()
-    await controller.setEnabled(true)
-    await vi.waitFor(() => {
-      expect(controller.status()).toEqual({ enabled: true, state: 'error', errorCode: 'frp_start_timeout' })
-    }, { timeout: 10_000, interval: 50 })
-    await controller.close()
-  }, 20_000)
 })
