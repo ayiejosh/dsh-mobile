@@ -86,6 +86,7 @@
     <string name="share_gateway_title">Share DSH address</string>
     <string name="restoring_trust">Reconnecting to this trusted DSH…</string>
     <string name="restore_taking_longer">Taking longer than expected. You can retry or choose another connection.</string>
+    <string name="restore_taking_longer_no_retry">Taking longer than expected. Return to the device list to choose another connection or pair again.</string>
     <string name="restore_show_devices">Show device list</string>
     <string name="open_harness_trusted">Reconnect to trusted %1$s</string>
     <string name="scanning_lan_limited">Scanning with limited discovery… Nearby devices permission was declined; direct UDP and HTTPS fallbacks will still run.</string>
@@ -116,7 +117,7 @@
     <string name="notification_channel_tasks_description">Notifies when a DSH task finishes or waits for input</string>
     <string name="task_notification_settings">Task notification settings</string>
     <string name="task_notifications_enabled">Task notifications enabled.</string>
-    <string name="task_notifications_denied">Task notifications remain disabled. You can enable them later from this menu.</string>
+    <string name="task_notifications_denied">Task notifications remain disabled. You can try again from DSH General settings.</string>
     <string name="paired_devices_title">Paired computers</string>
     <string name="paired_devices_description">Choose a computer to open DSH. Status checks run in the background.</string>
     <string name="add_computer">Add computer</string>

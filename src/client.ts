@@ -303,6 +303,103 @@ function MobileSwitchComputerRow(): unknown {
   )
 }
 
+interface MobileTaskNotificationCopy {
+  readonly title: string
+  readonly description: string
+  readonly action: string
+  readonly busy: string
+  readonly success: string
+  readonly reopen: string
+  readonly error: string
+  readonly retry: string
+}
+
+function mobileTaskNotificationCopy(locale: MobileControlLocale): MobileTaskNotificationCopy {
+  if (locale === 'zh') return {
+    title: '任务通知',
+    description: '在 Android 系统中开启任务完成和待确认提醒。',
+    action: '通知设置',
+    busy: '正在打开…',
+    success: '请在系统提示或设置中确认任务通知权限。',
+    reopen: '重新打开',
+    error: '无法打开通知设置，请重试。',
+    retry: '重试',
+  }
+  if (locale === 'it') return {
+    title: 'Notifiche delle attività',
+    description: 'Attiva gli avvisi Android per le attività completate o in attesa di conferma.',
+    action: 'Impostazioni notifiche',
+    busy: 'Apertura…',
+    success: 'Conferma il permesso nella richiesta o nelle impostazioni di sistema.',
+    reopen: 'Riapri',
+    error: 'Impossibile aprire le impostazioni delle notifiche. Riprova.',
+    retry: 'Riprova',
+  }
+  return {
+    title: 'Task notifications',
+    description: 'Enable Android reminders for completed tasks and pending confirmation.',
+    action: 'Notification settings',
+    busy: 'Opening…',
+    success: 'Confirm notification access in the system prompt or settings.',
+    reopen: 'Open again',
+    error: 'Could not open notification settings. Try again.',
+    retry: 'Retry',
+  }
+}
+
+/** Render the Android-only notification permission entry in DSH General settings. */
+function MobileTaskNotificationRow(): unknown {
+  const [nativeReady, setNativeReady] = useState(false)
+  const [state, setState] = useState<'idle' | 'busy' | 'success' | 'error'>('idle')
+  useEffect(() => {
+    let disposed = false
+    const checkNativeAction = (): void => {
+      const bridge = window.__DSH_MOBILE_NATIVE__
+      if (bridge === undefined) {
+        setNativeReady(false)
+        return
+      }
+      void Promise.resolve().then(() => bridge.capabilities()).then(capabilities => {
+        if (!disposed) setNativeReady(capabilities.includes('notification.settings'))
+      }, () => {
+        if (!disposed) setNativeReady(false)
+      })
+    }
+    checkNativeAction()
+    window.addEventListener('dsh-mobile-native-ready', checkNativeAction)
+    return () => {
+      disposed = true
+      window.removeEventListener('dsh-mobile-native-ready', checkNativeAction)
+    }
+  }, [])
+  if (!nativeReady) return null
+  const locale = selectedMobileControlLocale()
+  const copy = mobileTaskNotificationCopy(locale)
+  const invoke = (): void => {
+    const bridge = window.__DSH_MOBILE_NATIVE__
+    if (bridge === undefined || state === 'busy') return
+    setState('busy')
+    void bridge.invoke('notification.settings', {}).then(
+      () => { setState('success') },
+      () => { setState('error') },
+    )
+  }
+  return createElement('div', { className: 'dsh-mobile-settings_row', lang: locale },
+    createElement('div', { className: 'dsh-mobile-settings_rowText' },
+      createElement('div', { className: 'dsh-mobile-settings_title' }, copy.title),
+      createElement('div', { className: 'dsh-mobile-settings_desc', 'aria-live': 'polite' },
+        state === 'success' ? copy.success : state === 'error' ? copy.error : copy.description),
+    ),
+    createElement('button', {
+      type: 'button',
+      className: 'dsh-mobile-settings_selector',
+      disabled: state === 'busy',
+      'aria-busy': state === 'busy' ? 'true' : undefined,
+      onClick: invoke,
+    }, state === 'busy' ? copy.busy : state === 'success' ? copy.reopen : state === 'error' ? copy.retry : copy.action),
+  )
+}
+
 const CONTROL_REQUEST_TIMEOUT_MS = 15_000
 const LONG_CONTROL_REQUEST_TIMEOUT_MS = 210_000
 const GITHUB_RELEASES_URL = 'https://github.com/saya-ch/dsh-mobile/releases'
@@ -3550,11 +3647,19 @@ export function apply(ctx: ClientContext): void {
       : NATIVE_MOBILE_STYLES
     document.head.append(style)
     if (!desktopAdmin) {
-      const removeSettingsAction = ctx.slots.inject('settings.general.item', () => ctx.slots.register({
-        name: 'settings.general.item',
-        id: 'dsh-mobile-switch-computer',
-        order: 100,
-      }, MobileSwitchComputerRow))
+      const removeSettingsAction = ctx.slots.inject('settings.general.item', () => {
+        const removeSwitchComputer = ctx.slots.register({
+          name: 'settings.general.item',
+          id: 'dsh-mobile-switch-computer',
+          order: 100,
+        }, MobileSwitchComputerRow)
+        const removeTaskNotifications = ctx.slots.register({
+          name: 'settings.general.item',
+          id: 'dsh-mobile-task-notifications',
+          order: 110,
+        }, MobileTaskNotificationRow)
+        return () => { removeTaskNotifications(); removeSwitchComputer() }
+      })
       const removeCustom = installCustomAssets()
       const removeSurface = installDshLanguageBoundSurface(installNativeMobileSurface)
       return () => { removeSettingsAction(); removeCustom(); removeSurface(); style.remove() }

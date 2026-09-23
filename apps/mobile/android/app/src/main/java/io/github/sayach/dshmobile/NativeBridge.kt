@@ -134,6 +134,9 @@ internal class NativeBridge(
     /** Called by the WebView settings action to return to the native device list. */
     var onSwitchComputer: (() -> Unit)? = null
 
+    /** Called by DSH General settings to show the Android notification permission UI. */
+    var onOpenTaskNotificationSettings: (() -> Unit)? = null
+
     /** Install the origin-scoped WebMessage channel and page-side Promise adapter. */
     fun install(): Boolean {
         if (installed) return true
@@ -407,6 +410,19 @@ internal class NativeBridge(
                 "clipboard.read" -> startClipboardRead(requestId)
                 "clipboard.write" -> startClipboardWrite(requestId, input.optString("text", ""))
                 "notification.notify" -> startTaskNotification(requestId, input)
+                "notification.settings" -> activity.runOnUiThread {
+                    val callback = onOpenTaskNotificationSettings
+                    if (!installed || preservingForConfiguration || callback == null) {
+                        finishPending(requestId, errorJson("unavailable", "notification settings are unavailable", requestId))
+                    } else {
+                        try {
+                            callback.invoke()
+                            finishPending(requestId, successJson(requestId, JSONObject().put("ok", true)))
+                        } catch (_: Exception) {
+                            finishPending(requestId, errorJson("failed", "notification settings could not open", requestId))
+                        }
+                    }
+                }
                 "mobile.switch-computer" -> activity.runOnUiThread {
                     val callback = onSwitchComputer
                     if (!installed || preservingForConfiguration || callback == null) {
@@ -757,7 +773,7 @@ internal class NativeBridge(
                 activity.checkSelfPermission(Manifest.permission.POST_NOTIFICATIONS) != PackageManager.PERMISSION_GRANTED) ||
             !NotificationManagerCompat.from(activity).areNotificationsEnabled()
         ) {
-            finishPending(requestId, errorJson("permission_required", "enable task notifications from the app menu", requestId))
+            finishPending(requestId, errorJson("permission_required", "enable task notifications in DSH General settings", requestId))
             return
         }
         activity.runOnUiThread {
@@ -1034,7 +1050,7 @@ internal class NativeBridge(
           bridge.onmessage = handleReply;
           window.__DSH_MOBILE_NATIVE_STATE__ = { pending };
           window.__DSH_MOBILE_NATIVE__ = {
-            capabilities: () => Promise.resolve(['files.pick','camera.capture','share','clipboard.read','clipboard.write','notification.notify','mobile.switch-computer']),
+            capabilities: () => Promise.resolve(['files.pick','camera.capture','share','clipboard.read','clipboard.write','notification.notify','notification.settings','mobile.switch-computer']),
             invoke: (action, input = {}) => new Promise((resolve, reject) => {
               const requestId = crypto.randomUUID();
               let raw;

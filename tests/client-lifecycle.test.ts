@@ -424,6 +424,22 @@ describe('mobile-control localization', () => {
     expect(source).toContain("t('httpFrameWarning')")
   })
 
+  it('shows Android notification settings in DSH General and routes it through the scoped bridge', () => {
+    const source = readFileSync(new URL('../src/client.ts', import.meta.url), 'utf8')
+    const bridge = readFileSync(new URL('../apps/mobile/android/app/src/main/java/io/github/sayach/dshmobile/NativeBridge.kt', import.meta.url), 'utf8')
+    const activity = readFileSync(new URL('../apps/mobile/android/app/src/main/java/io/github/sayach/dshmobile/MainActivity.kt', import.meta.url), 'utf8')
+    expect(source).toContain("id: 'dsh-mobile-task-notifications'")
+    expect(source).toContain("capabilities.includes('notification.settings')")
+    expect(source).toContain("bridge.invoke('notification.settings', {})")
+    expect(source).toContain('请在系统提示或设置中确认任务通知权限。')
+    expect(source).toContain('Confirm notification access in the system prompt or settings.')
+    expect(source).toContain('Conferma il permesso nella richiesta o nelle impostazioni di sistema.')
+    expect(bridge).toContain('if (!NativeBridgePolicy.isTrustedMessage(origin, sourceOrigin.toString(), isMainFrame)) return')
+    expect(bridge).toContain('"notification.settings" -> activity.runOnUiThread')
+    expect(bridge).toContain('onOpenTaskNotificationSettings')
+    expect(activity).toContain('bridge.onOpenTaskNotificationSettings = ::openTaskNotificationSettings')
+  })
+
   it('remounts plugin-owned UI only when the DSH document language changes', () => {
     const documentElement = { lang: 'en-US' }
     let observer: { callback: MutationCallback, disconnect: ReturnType<typeof vi.fn> } | undefined

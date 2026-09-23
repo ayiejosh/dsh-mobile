@@ -357,7 +357,7 @@ class MainActivity : Activity() {
     private fun restoreStartupDevice(device: PairedDeviceRecord) {
         // Direct startup should not flash the device list. Keep a small native
         // loading surface while the most recently used device is renewed.
-        showRestoringTrust()
+        showRestoringTrust(device.key)
         activeDeviceKey = device.key
         restoreTrustedDevice(
             preferredOrigin = device.origin,
@@ -1037,7 +1037,7 @@ class MainActivity : Activity() {
         Toast.makeText(this, R.string.tailscale_vpn_warning, Toast.LENGTH_LONG).show()
     }
 
-    private fun showRestoringTrust() {
+    private fun showRestoringTrust(retryDeviceKey: String? = null) {
         cancelRestoreEscape()
         stopDeviceListRefresh()
         deviceListVisible = false
@@ -1060,7 +1060,12 @@ class MainActivity : Activity() {
             gravity = Gravity.CENTER
         })
         content.addView(spacer(12))
-        val escapeMessage = textView(R.string.restore_taking_longer, 14f, Typeface.NORMAL, R.color.app_secondary).apply {
+        val escapeMessage = textView(
+            if (retryDeviceKey == null) R.string.restore_taking_longer_no_retry else R.string.restore_taking_longer,
+            14f,
+            Typeface.NORMAL,
+            R.color.app_secondary,
+        ).apply {
             gravity = Gravity.CENTER
             visibility = View.GONE
         }
@@ -1070,11 +1075,13 @@ class MainActivity : Activity() {
             orientation = LinearLayout.VERTICAL
             visibility = View.GONE
         }
-        escapeActions.addView(
-            secondaryButton(R.string.retry, 48) { retryActiveRestore() },
-            LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT),
-        )
-        escapeActions.addView(spacer(8))
+        if (retryDeviceKey != null) {
+            escapeActions.addView(
+                secondaryButton(R.string.retry, 48) { retryStartupRestore(retryDeviceKey) },
+                LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT),
+            )
+            escapeActions.addView(spacer(8))
+        }
         escapeActions.addView(
             primaryButton(R.string.restore_show_devices, 48) { showDeviceList() },
             LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT),
@@ -1091,8 +1098,12 @@ class MainActivity : Activity() {
         }.also { restoreUiHandler.postDelayed(it, RESTORE_ESCAPE_DELAY_MS) }
     }
 
-    private fun retryActiveRestore() {
-        val device = activeDeviceKey?.let { key -> pairedDeviceStore.load().firstOrNull { it.key == key } }
+    private fun retryStartupRestore(deviceKey: String) {
+        val device = ConnectionRestorePolicy.retryDevice(
+            pairedDeviceStore.load(),
+            deviceKey,
+            System.currentTimeMillis(),
+        )
         if (device == null) {
             showConnectionCenter()
             return
@@ -1979,6 +1990,7 @@ class MainActivity : Activity() {
             }
             bridge.onDeviceRevoked = ::handleDeviceRevoked
             bridge.onSwitchComputer = ::showDeviceList
+            bridge.onOpenTaskNotificationSettings = ::openTaskNotificationSettings
             bridge.install()
             deferredBridgeResult?.let { result ->
                 if (bridge.onActivityResult(result.requestCode, result.resultCode, result.data)) deferredBridgeResult = null

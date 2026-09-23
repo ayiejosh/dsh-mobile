@@ -45,6 +45,20 @@ class ConnectionRestorePolicyTest {
     }
 
     @Test
+    fun retryUsesOnlyTheDeviceBoundToTheCurrentRestoreScreen() {
+        val previous = pairedDevice("a", AccessMode.LAN, lastConnectedAt = now + 3_000)
+        val current = pairedDevice("b", AccessMode.REMOTE, lastConnectedAt = now + 1_000)
+        val devices = listOf(previous, current)
+
+        assertEquals(current.key, ConnectionRestorePolicy.retryDevice(devices, current.key, now)?.key)
+        assertEquals(null, ConnectionRestorePolicy.retryDevice(devices, "missing", now))
+        assertEquals(null, ConnectionRestorePolicy.retryDevice(listOf(previous), current.key, now))
+        assertEquals(null, ConnectionRestorePolicy.retryDevice(
+            listOf(current.copy(status = PairedDeviceStatus.REVOKED)), current.key, now,
+        ))
+    }
+
+    @Test
     fun restoresTheLastSuccessfulRemoteConnectionFirst() {
         val targets = targets(AccessMode.REMOTE)
 

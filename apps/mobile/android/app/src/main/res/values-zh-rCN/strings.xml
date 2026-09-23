@@ -85,6 +85,7 @@
     <string name="share_gateway_title">分享 DSH 地址</string>
     <string name="restoring_trust">正在恢复与这台 DSH 的可信连接…</string>
     <string name="restore_taking_longer">连接时间较长。你可以重试，或选择其他连接方式。</string>
+    <string name="restore_taking_longer_no_retry">连接时间较长。可返回设备列表，选择其他连接或重新配对。</string>
     <string name="restore_show_devices">查看设备列表</string>
     <string name="open_harness_trusted">重新连接可信设备 %1$s</string>
     <string name="scanning_lan_limited">正在以受限方式扫描… 未授予附近设备权限，App 仍会继续尝试 UDP 与 HTTPS 兼容探测。</string>
@@ -115,7 +116,7 @@
     <string name="notification_channel_tasks_description">DSH 任务完成或等待确认时发送通知</string>
     <string name="task_notification_settings">任务通知设置</string>
     <string name="task_notifications_enabled">任务通知已开启。</string>
-    <string name="task_notifications_denied">任务通知仍处于关闭状态，之后可从此菜单重新开启。</string>
+    <string name="task_notifications_denied">任务通知仍处于关闭状态，可从 DSH 的“常规”设置再次尝试。</string>
     <string name="paired_devices_title">已配对设备</string>
     <string name="paired_devices_description">选择要打开 DSH 的电脑，状态会在后台检测。</string>
     <string name="add_computer">添加电脑</string>

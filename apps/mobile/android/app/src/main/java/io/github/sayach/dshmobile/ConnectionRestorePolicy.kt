@@ -59,6 +59,10 @@ internal object ConnectionRestorePolicy {
             ?: usable.firstOrNull()
     }
 
+    /** Retry only the still-authorized device named by the current restore screen. */
+    fun retryDevice(devices: List<PairedDeviceRecord>, key: String, now: Long): PairedDeviceRecord? =
+        selectStartupDevice(devices.filter { it.key == key }, key, null, now)
+
     /** Send a persisted bearer credential only to the exact remote origin that previously received it. */
     fun shouldRenewBeforePairing(
         mode: AccessMode,

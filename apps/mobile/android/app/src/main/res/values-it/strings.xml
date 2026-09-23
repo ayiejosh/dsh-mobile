@@ -87,6 +87,7 @@
     <string name="share_gateway_title">Condividi indirizzo DSH</string>
     <string name="restoring_trust">Riconnessione a questo DSH attendibile…</string>
     <string name="restore_taking_longer">La connessione richiede più tempo del previsto. Riprova o scegli un’altra connessione.</string>
+    <string name="restore_taking_longer_no_retry">La connessione richiede più tempo del previsto. Torna all’elenco dei dispositivi per scegliere un’altra connessione o eseguire di nuovo l’abbinamento.</string>
     <string name="restore_show_devices">Mostra elenco dispositivi</string>
     <string name="open_harness_trusted">Riconnetti a %1$s attendibile</string>
     <string name="scanning_lan_limited">Scansione con rilevamento limitato… Il permesso per i dispositivi vicini è stato negato; i metodi alternativi UDP e HTTPS continueranno a funzionare.</string>
@@ -117,7 +118,7 @@
     <string name="notification_channel_tasks_description">Notifica quando un\'attività DSH termina o richiede conferma</string>
     <string name="task_notification_settings">Impostazioni notifiche attività</string>
     <string name="task_notifications_enabled">Notifiche attività attivate.</string>
-    <string name="task_notifications_denied">Le notifiche attività restano disattivate. Puoi attivarle in seguito da questo menu.</string>
+    <string name="task_notifications_denied">Le notifiche attività restano disattivate. Puoi riprovare dalle impostazioni Generali di DSH.</string>
     <string name="paired_devices_title">Computer abbinati</string>
     <string name="paired_devices_description">Scegli il computer da aprire in DSH. Lo stato viene controllato in background.</string>
     <string name="add_computer">Aggiungi computer</string>

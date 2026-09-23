@@ -102,6 +102,8 @@ describe('native mobile presentation', () => {
     expect(NATIVE_MOBILE_STYLES).toContain('.dsh-mobile-media-action:focus-visible')
     expect(NATIVE_MOBILE_STYLES).toContain('.dsh-mobile-settings_row')
     expect(NATIVE_MOBILE_STYLES).toContain('.dsh-mobile-settings_selector')
+    expect(NATIVE_MOBILE_STYLES).toContain('.dsh-mobile-settings_selector:focus-visible')
+    expect(NATIVE_MOBILE_STYLES).toContain('min-height:48px !important')
     expect(NATIVE_MOBILE_STYLES).toContain('[data-dsh-mobile-composer-row] { display:grid !important; grid-template-columns:max-content minmax(0,1fr) !important')
     expect(NATIVE_MOBILE_STYLES).toContain('[data-dsh-mobile-composer-trailing] { display:flex !important; flex-wrap:nowrap !important; width:100% !important')
     expect(NATIVE_MOBILE_STYLES).toContain('[data-dsh-mobile-composer-model] { flex:1 1 0 !important')
