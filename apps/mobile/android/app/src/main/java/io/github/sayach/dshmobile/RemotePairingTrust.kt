@@ -5,10 +5,10 @@ internal enum class PairingTrustAnchor {
     /** Pin the CA the gateway served, fingerprinted against the pairing key. */
     PINNED_CA,
 
-    /** No CA was served (a publicly trusted entry); keep the platform trust store. */
+    /** No CA was served for a dsh1 public-CA entry; keep the platform trust store. */
     SYSTEM_TRUST_STORE,
 
-    /** The gateway served something other than the CA the pairing key promised. */
+    /** A required CA is absent or the served CA does not match the pairing key. */
     IDENTITY_MISMATCH,
 }
 
@@ -29,26 +29,28 @@ internal data class PairingTrustDecision(
  *
  * The three outcomes are deliberately separated, because only two of them are legitimate:
  *  - a served CA that matches the pairing key is pinned;
- *  - nothing served (a publicly trusted entry answers 404) keeps the platform trust store and
- *    is **not** an error — this is the unchanged upstream behaviour;
- *  - anything served that is not the promised CA is a hard identity mismatch.
+ *  - an explicit 404 keeps the platform trust store only for a dsh1 public-CA key;
+ *  - a dsh2 key with no CA, or a mismatched served CA, is a hard identity mismatch.
  */
 internal object RemotePairingTrust {
     /**
      * Decide how the native pairing request must authenticate the gateway.
      *
-     * @param fetchedCa the bytes returned by `/mobile-access/ca.cer`, or `null` when the entry
-     *     served nothing (404, or the optional fetch failed).
-     * @param instanceId the SHA-256 fingerprint carried by the scanned pairing key.
+     * @param fetchedCa the bytes returned by `/mobile-access/ca.cer`, or `null` only for HTTP 404.
+     *     Transport, TLS, and server failures must reach the caller as exceptions.
+     * @param key the parsed pairing key and its CA requirement.
      * @return the pinned CA, the platform trust store, or an identity mismatch.
      */
-    fun decide(fetchedCa: ByteArray?, instanceId: String): PairingTrustDecision {
+    fun decide(fetchedCa: ByteArray?, key: PairingKey): PairingTrustDecision {
         if (fetchedCa == null) {
-            return PairingTrustDecision(PairingTrustAnchor.SYSTEM_TRUST_STORE, null)
+            return PairingTrustDecision(
+                if (key.requiresCa) PairingTrustAnchor.IDENTITY_MISMATCH else PairingTrustAnchor.SYSTEM_TRUST_STORE,
+                null,
+            )
         }
         // Fail closed: a served payload that is not the promised, self-signed, valid CA is an
         // identity mismatch, never a reason to fall back to the platform trust store.
-        val pinned = PairingTrust.validateCertificate(fetchedCa, instanceId)
+        val pinned = PairingTrust.validateCertificate(fetchedCa, key.instanceId)
             ?: return PairingTrustDecision(PairingTrustAnchor.IDENTITY_MISMATCH, null)
         return PairingTrustDecision(PairingTrustAnchor.PINNED_CA, pinned)
     }

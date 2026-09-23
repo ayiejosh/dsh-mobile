@@ -75,6 +75,17 @@ describe('attach artefacts for an existing frps', () => {
     expect(legacy).toContain('reverse_proxy 127.0.0.1:7080')
   })
 
+  it('uses Caddy automatic TLS for a domain instead of showing the public-IP certbot guide', () => {
+    const settings = attachSettings({ publicOrigin: 'https://dsh.example.com', vhostHttpPort: 8080 })
+    const parts = createFrpAttachTemplateParts(settings)
+    const plan = createFrpAttachPlan(settings)
+    expect(parts.vps).toContain('dsh.example.com {')
+    expect(parts.vps).toContain('Caddy 会自动申请和续期证书')
+    expect(parts.vps).not.toContain('certbot')
+    expect(plan.vps.map(step => step.id)).toEqual(['write-snippet', 'add-import', 'verify-https'])
+    expect(plan.vps[2]?.verifyHint).toContain('DNS')
+  })
+
   it('refuses attach mode without the real vhost port and refuses self-signed outside attach', () => {
     expect(() => attachSettings()).toThrow('frp_attach_mode_requires_vhost_port')
     expect(() => parseFrpSettings({

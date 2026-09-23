@@ -34,6 +34,8 @@
 > **0.4.5 update**: support DSH `0.1.7-alpha.2` mobile boot URLs, fix reconnect failures and long-lived caching of failed resources, and add an exit from App connection restoration. [Details](CHANGELOG.md).
 >
 > **Upgrade reminder**: update both the plugin and Android app to 0.4.5 when practical. Existing pairings are retained and older apps can still connect, but Retry and Device list during connection restoration require the new app. [Compatibility notes](#compatibility).
+>
+> **In development, not released**: remote diagnostics gain a supplementary proxy probe, and self-hosted FRP gains existing-frps attachment and a self-signed entry. Version 0.4.5 does not contain these features. [Unreleased notes](CHANGELOG.md#unreleased).
 
 <p align="center">
   <a href="https://github.com/saya-ch/dsh-mobile/releases/download/v0.4.5/dsh-mobile-android-v0.4.5.apk"><img src="assets/brand/app-icon-rounded.svg" alt="DSH Mobile Android app icon" width="72" height="72"></a><br>
@@ -43,7 +45,7 @@
 
 DSH Mobile is a DeepSeek Harness plugin that lets a mobile browser or the Android app connect over a protected LAN or an optional Tailscale Funnel, cpolar, cloudflared, self-hosted FRP, or own reverse-proxy remote path. Local and remote access keep the same sessions, Workspaces, messages, and tools while using separate switches and paired-device stores without modifying DeepSeek Harness source.
 
-Mobile access runs on its own HTTPS origin with pinned certificates; only paired devices pass validation.
+Mobile access uses a dedicated HTTPS origin and device pairing. The Android app pins the private LAN CA; public remote paths use platform-trusted certificates, while the unreleased self-signed FRP entry pins a remote CA during pairing.
 
 It also lets you customize the phone from a DSH conversation: `/mobile <what you want>`.
 
@@ -56,7 +58,7 @@ It also lets you customize the phone from a DSH conversation: `/mobile <what you
 - **Pairing and multi-device**: pair once via QR code, link, or key; Wi-Fi, hotspot, or IP changes normally recover automatically; the app shows all paired computers together in one device list (LAN and every remote), each with live reachability — switch, re-pair, or delete in one tap.
 - **One-click diagnostics and approval**: check versions, gateway, network interface, firewall, and the remote path with a redacted report; approve blocked third-party plugin connections per exact path.
 - **Task system notifications**: completion and pending-input alerts via Android system notifications, enabled from DSH General settings inside the app, with redacted lock-screen text.
-- **Defense in depth**: dedicated HTTPS with pinned certificates, Keystore-backed credentials, device tokens sent only to their exact Origin, third-party WebSockets blocked by default.
+- **Defense in depth**: private CAs pinned for LAN and the unreleased self-signed entry, trusted HTTPS for public remote paths, Keystore-backed credentials, device tokens sent only to their exact Origin, and third-party WebSockets blocked by default.
 
 A paired device is fully trusted and can operate the DSH on the computer. Use this only on a trusted home or office LAN, or a trusted VPN.
 
@@ -143,7 +145,7 @@ Remote providers may impose bandwidth and connection limits: the [cpolar Free pl
 
 Tailscale Funnel has broad reach but may be unreliable from mainland China. Its runtime ties the public listener to the parent process and a bounded control channel; parent exit, channel closure, or an explicit stop ends the current generation and cleans up its resources. cpolar is better suited to mainland networks, while self-hosted FRP fits users who already have a VPS and want to avoid public-provider bandwidth quotas. cloudflared runs in two modes: a quick tunnel needs no account or sign-in, but its hostname is random, changes on every reconnect, and is positioned by Cloudflare for testing with no uptime guarantee, so it suits temporary or verification use rather than a permanent channel; a named tunnel uses a Cloudflare account token and keeps one fixed public hostname across restarts. An unregistered domain on a mainland-China VPS may be intercepted by the cloud provider; public IPv4 mode avoids that dependency. The plugin validates pinned on-demand components, stores their configuration and programs entirely under `$DSH_HOME/mobile-access/`, and can remove them completely from the panel.
 
-Self-hosted FRP generates only one HTTP vhost to the DSH loopback gateway. It exposes no arbitrary FRP configuration, TCP/UDP proxy, or FRP plugin. The VPS plaintext vhost must bind to `127.0.0.1`, with Caddy providing public HTTPS; the plugin rejects a publicly reachable plaintext port and reports readiness only after public discovery identifies the current computer.
+In 0.4.5, self-hosted FRP uses an HTTP vhost to the DSH loopback gateway. Its plaintext VPS listener must be loopback-only, with Caddy providing public HTTPS. The unreleased existing-frps path neither installs nor changes the server: its public-CA mode still needs a restricted HTTP vhost and Caddy, while its self-signed mode forwards raw TCP to a computer-side HTTPS gateway whose CA the new Android app pins during pairing. The self-signed mode currently uses public IPv4 and is unavailable to the released 0.4.5 app. Neither mode exposes arbitrary FRP configuration. Because frps `proxyBindAddr` governs proxy listeners globally, do not change it for the new TCP entry without checking existing plaintext vhosts. See [Attach to an existing frps](docs/ATTACH_EXISTING_FRPS.en.md).
 
 The own-proxy HTTP backend must remain on a trusted private network: **never port-forward it publicly or bypass it by proxying to DSH or the existing LAN 3443 gateway**. CIDRs match the proxy's direct TCP peer, not forwarded headers. Preserve the external Host (including port), Origin, cookies and WebSocket. Clearing proxy settings keeps paired remote devices.
 
@@ -184,7 +186,7 @@ The examples above, applied:
 
 ## Device management
 
-The Android app shows multiple computers at once in one **Paired computers** list: LAN, cpolar, cloudflared, Tailscale Funnel, and self-hosted FRP pairings together. The first upgrade migrates the legacy LAN and remote credentials without requiring another pairing; when an address changes, the app merges the row by the DSH installation's stable `instanceId` and keeps its custom name. Device tokens and LAN CAs remain encrypted by Android Keystore and never appear in the list or QR code.
+The Android app shows multiple computers at once in one **Paired computers** list: LAN, cpolar, cloudflared, Tailscale Funnel, and self-hosted FRP pairings together. The first upgrade migrates the legacy LAN and remote credentials without requiring another pairing; an address change merges into a record with the same `instanceId` and keeps its custom name. Self-signed FRP uses its own CA fingerprint as identity, so its first pairing may appear as a separate row from LAN for the same computer. Android Keystore encrypts device tokens and LAN CAs; the unreleased self-signed FRP path also encrypts its pinned remote CA. These values never appear in the list or QR code.
 
 Each row shows its custom name, transport, Origin, live reachability, and last connection time. A green dot means **Reachable**; a gray dot means **Checking**, **Temporarily unreachable**, **Pairing expired**, or **Removed on computer**. The check validates the DSH Gateway over HTTPS instead of using ICMP, so a temporary network outage is not mistaken for computer-side revocation.
 
@@ -268,7 +270,7 @@ Three layers: the Host face for discovery, pairing, HTTPS, loopback proxying, an
 - A remote origin is publicly reachable, but unpaired requests cannot enter DSH; turn the remote switch off when it is not needed.
 - cpolar downloads a pinned official build only after confirmation and verifies its size and SHA-256. It installs no system service, PATH entry, or startup task, and plugin cleanup removes its managed files.
 - cloudflared likewise downloads a pinned build from the official GitHub Release only after confirmation and verifies the exact size and SHA-256, and it launches the client with automatic updates disabled so the running binary is always the verified one. A quick tunnel needs no account, token, or DNS record; a named tunnel token is stored only in the plugin private directory and reaches cloudflared through the environment, and cleanup deletes every file it manages.
-- Self-hosted FRP downloads pinned official `frpc` only after confirmation and verifies the origin, exact size, SHA-256, archive paths, and executable version. The shared token never appears in status, diagnostics, or logs. Copying the server template places it on the system clipboard, so clear the clipboard after use; local cleanup removes only plugin-managed files, while the VPS is cleaned separately with the uninstall script or one-click server cleanup. Automatic deployment and server cleanup both display the SSH host keys, which must be verified against the VPS console before continuing.
+- Self-hosted FRP downloads pinned official `frpc` only after confirmation and verifies the origin, exact size, SHA-256, archive paths, and executable version. The shared token never appears in status, diagnostics, or attachment-plan responses. Copying a server template, or explicitly copying a token-bearing attach config after re-entering its token, places it on the system clipboard; clear it after use. Local cleanup removes only plugin-managed files. Managed VPS deployments require separate uninstall-script or one-click cleanup; attaching to an existing frps neither changes nor cleans up that VPS. Automatic deployment and server cleanup require SSH host-key verification against the VPS console.
 - A paired device is a fully trusted DeepSeek Harness operator and can run tools on the computer; revoke lost devices from the computer.
 - The LAN gateway listens only while Mobile Access is enabled; with it off, DSH keeps running normally on the computer.
 
@@ -276,6 +278,7 @@ See [SECURITY.md](SECURITY.md).
 
 ## Troubleshooting
 
+- **Development diagnostics say “reachable through the computer's proxy”**: the check tries a direct request first, then an HTTP proxy from the DSH process environment only if direct access fails; `NO_PROXY` may exclude the target. This proves only that the computer completed an HTTPS probe through the proxy, not that the phone or actual tunnel can connect. Test from the phone's mobile network. If both paths fail, diagnostics continue to report the endpoint unreachable instead of treating an offline route as ready.
 - **Boot fails with `saved LAN interface "XXX" is not connected`**: the
   computer switched networks (Wi-Fi/Ethernet/dock) and the previously saved
   adapter is down. Either reconnect that network, re-run setup on the new

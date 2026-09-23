@@ -104,12 +104,11 @@ const ATTACH_FORM = {
  * The token-masking triad of the attach preview.
  *
  * The panel copies text into the system clipboard, where it survives, so every
- * artefact the plugin produces on its own must mask the token — while the file
- * frpc reads must stay byte-for-byte the plaintext upstream configuration, and
- * exactly one explicit action may reveal it.
+ * artefact the plugin produces on its own must mask the token. The file frpc
+ * reads still needs the plaintext upstream configuration.
  */
 describe('attach preview token masking', () => {
-  it('masks the token in the default preview and reveals it only on request', async () => {
+  it('masks the token even when a same-origin caller requests a reveal of saved settings', async () => {
     const route = await mount()
     const configured = await invoke(route, 'POST', '/api/mobile-access/remote/frp/configure', JSON.stringify(ATTACH_FORM))
     expect(configured.status).toBe(200)
@@ -129,12 +128,17 @@ describe('attach preview token masking', () => {
     expect(parsed.frpAttachTemplate).toContain(maskedAssignment)
     expect(parsed.frpAttachTemplate).not.toContain(TOKEN)
 
-    const revealed = await invoke(route, 'POST', '/api/mobile-access/remote/frp/attach-plan',
-      JSON.stringify({ ...ATTACH_FORM, revealToken: true }))
-    expect(revealed.status).toBe(200)
-    expect(revealed.body).toContain(TOKEN)
-    const revealedParsed = JSON.parse(revealed.body) as { frpAttachPlan: { local: { tokenMasked: boolean } } }
-    expect(revealedParsed.frpAttachPlan.local.tokenMasked).toBe(false)
+    const requestedReveal = await invoke(route, 'POST', '/api/mobile-access/remote/frp/attach-plan',
+      JSON.stringify({ ...ATTACH_FORM, token: '', revealToken: true }))
+    expect(requestedReveal.status).toBe(200)
+    expect(requestedReveal.body).not.toContain(TOKEN)
+    const revealedParsed = JSON.parse(requestedReveal.body) as {
+      frpAttachPlan: { local: { frpcToml: string; tokenMasked: boolean } }
+      frpAttachTemplate: string
+    }
+    expect(revealedParsed.frpAttachPlan.local.frpcToml).toContain(maskedAssignment)
+    expect(revealedParsed.frpAttachPlan.local.tokenMasked).toBe(true)
+    expect(revealedParsed.frpAttachTemplate).not.toContain(TOKEN)
 
     // Nothing is persisted by a preview, and the control payload never carries it.
     const status = await invoke(route, 'GET', '/api/mobile-access/remote/control')

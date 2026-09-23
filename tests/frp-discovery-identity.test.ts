@@ -84,7 +84,7 @@ async function configureSelfSignedIngress(config: FrpConfigStore): Promise<void>
     serverAddress: 'frp.example.com',
     serverPort: 7000,
     token: '0123456789abcdef0123456789abcdef',
-    publicOrigin: 'https://dsh.example.com',
+    publicOrigin: 'https://1.2.3.4',
     mode: 'attach',
     entryTls: 'self-signed',
     publicPort: 33_080,
@@ -132,15 +132,62 @@ describe('FRP self-check identity', () => {
 
     // The self-signed entry is dialled on its public TCP port, never on 443.
     expect(probeDiscovery).toHaveBeenCalledWith(
-      { origin: 'https://dsh.example.com:33080' },
+      { origin: 'https://1.2.3.4:33080' },
       INGRESS_INSTANCE_ID,
       expect.any(AbortSignal),
     )
     await vi.waitFor(() => {
-      expect(controller.status()).toEqual({ enabled: true, state: 'ready', origin: 'https://dsh.example.com' })
+      expect(controller.status()).toEqual({ enabled: true, state: 'ready', origin: 'https://1.2.3.4:33080' })
     })
-    expect(createGateway).toHaveBeenCalledWith('https://dsh.example.com', expect.objectContaining({ entryTls: 'self-signed' }))
+    expect(createGateway).toHaveBeenCalledWith('https://1.2.3.4', expect.objectContaining({ entryTls: 'self-signed' }))
     await controller.close()
+  })
+
+  it('checks the self-signed leaf while ready without replacing the paired gateway', async () => {
+    const { executable, config } = await fixture()
+    await configureSelfSignedIngress(config)
+    const activeGateway = gateway(INGRESS_INSTANCE_ID)
+    const maintainIngressCertificate = vi.fn(async () => undefined)
+    const controller = new FrpController(controllerOptions(executable, config, {
+      createGateway: async () => activeGateway,
+      probeDiscovery: async () => true,
+      maintainIngressCertificate,
+      ingressCertificateCheckMs: 20,
+    }))
+    try {
+      await controller.initialize()
+      await controller.setEnabled(true)
+      await vi.waitFor(() => { expect(maintainIngressCertificate).toHaveBeenCalled() })
+      expect(maintainIngressCertificate).toHaveBeenCalledWith(
+        expect.objectContaining({ entryTls: 'self-signed' }), activeGateway,
+      )
+      expect(controller.status()).toMatchObject({ state: 'ready', origin: 'https://1.2.3.4:33080' })
+      expect(activeGateway.close).not.toHaveBeenCalled()
+    } finally {
+      await controller.close()
+    }
+  })
+
+  it('stops the tunnel with a stable error when the ingress CA expires in a running process', async () => {
+    const { executable, config } = await fixture()
+    await configureSelfSignedIngress(config)
+    const activeGateway = gateway(INGRESS_INSTANCE_ID)
+    const controller = new FrpController(controllerOptions(executable, config, {
+      createGateway: async () => activeGateway,
+      probeDiscovery: async () => true,
+      maintainIngressCertificate: async () => { throw new Error('frp_ingress_ca_expired') },
+      ingressCertificateCheckMs: 20,
+    }))
+    try {
+      await controller.initialize()
+      await controller.setEnabled(true)
+      await vi.waitFor(() => {
+        expect(controller.status()).toEqual({ enabled: true, state: 'error', errorCode: 'frp_ingress_ca_expired' })
+      })
+      expect(activeGateway.close).toHaveBeenCalledOnce()
+    } finally {
+      await controller.close()
+    }
   })
 
   it('times out with frp_start_timeout when the probe never succeeds', async () => {

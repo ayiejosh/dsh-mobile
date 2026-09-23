@@ -1313,15 +1313,32 @@ class MainActivity : Activity() {
                 return@execute
             }
             if (generation != pairingGeneration) return@execute
+            val existingRecord = pairedDeviceStore.load().firstOrNull { it.mode == mode && it.instanceId == key.instanceId }
+            val savedCredential = store.load()
+            val savedCa = existingRecord?.caCertificate
+                ?: savedCredential?.takeIf { it.instanceId == key.instanceId }?.caCertificate
+            val trustKey = PairingTrust.preserveRemotePin(mode, key, savedCa)
             // A LAN gateway always serves its pairing CA. A remote gateway serves one only for the
-            // self-signed passthrough entry, whose CA is the very fingerprint the pairing key
-            // carries; a publicly trusted entry answers 404 and keeps the platform trust store,
-            // exactly as before. Anything served that is not the promised CA fails closed.
+            // self-signed passthrough entry. A dsh2 key or a previously pinned remote CA requires
+            // that exact CA; only a public-CA dsh1 entry may answer 404 and use the system store.
             // The pinned CA also reaches the WebView, the download client and the persisted
             // credential, so restore, renewal and probing keep the very same anchor.
-            val trust = PairingTrust.selectTrustAnchor(mode, key.instanceId) {
-                runCatching { NativeAuthClient.fetchPairingCa(origin) }.getOrNull()
+            val trustAttempt = runCatching {
+                PairingTrust.selectTrustAnchor(mode, trustKey) {
+                    NativeAuthClient.fetchPairingCa(origin)
+                }
             }
+            val trustFailure = trustAttempt.exceptionOrNull()
+            if (trustFailure != null) {
+                runOnUiThread {
+                    if (generation != pairingGeneration) return@runOnUiThread
+                    status.setTextColor(getColor(R.color.app_error))
+                    status.setText(pairingFailureMessage(trustFailure, origin))
+                    button.isEnabled = true
+                }
+                return@execute
+            }
+            val trust = trustAttempt.getOrNull()
             if (trust == null) {
                 runOnUiThread {
                     if (generation != pairingGeneration) return@runOnUiThread
@@ -1332,11 +1349,10 @@ class MainActivity : Activity() {
                 return@execute
             }
             val (certificate, expectedInstanceId) = trust
-            val existingRecord = pairedDeviceStore.load().firstOrNull { it.mode == mode && it.instanceId == key.instanceId }
             val savedOrigin = GatewayOrigin.parse(
                 preferences.getString(originPreference(mode), "").orEmpty(),
             ) ?: existingRecord?.origin
-            val existingCredential = (existingRecord?.credential() ?: store.load()).takeIf {
+            val existingCredential = (existingRecord?.credential() ?: savedCredential).takeIf {
                 ConnectionRestorePolicy.shouldRenewBeforePairing(
                     mode = mode,
                     credential = it,

@@ -1,5 +1,7 @@
 # 自建 FRP 维护说明
 
+既有 frps 接入与自签入口目前仅在本地集成分支，未包含在已发布的 0.4.5 插件与 App 中；下文的 2026-09-03 真机记录只验证托管部署的公开证书 IP 档，不是 attach 档验收结果。
+
 面向维护者。用户文档见 [SELF_HOSTED_FRP.md](SELF_HOSTED_FRP.md)；「接入既有 frps + 自签穿透」用户指南见
 [ATTACH_EXISTING_FRPS.md](ATTACH_EXISTING_FRPS.md)。
 
@@ -8,17 +10,17 @@
 | | `mode: 'deploy'`（缺省） | `mode: 'attach'` |
 |---|---|---|
 | 谁装 frps | 插件在 VPS 上装并托管 | **用户既有的 frps，插件绝不安装/修改/重启** |
-| 谁做 TLS 终止 | VPS 的 Caddy | 公网入口：frps 的 **TCP 代理**；TLS 端点：**本机网关自己** |
+| 谁做 TLS 终止 | VPS 的 Caddy | 公开证书档由 VPS Caddy 终止；自签档由 frps TCP 透传到本机网关终止 |
 | 需要的 SSH | 是（`vps/deploy`） | **否（零 SSH）** |
 | 产出 | frps.toml + Caddy 片段 + systemd 单元 | 本机 frpc.toml + VPS 侧待办清单（可复制） |
 
 | | `entryTls: 'public-ip-cert'`（缺省） | `entryTls: 'self-signed'`（仅 attach） |
 |---|---|---|
-| 公网入口 | `443`，Caddy 用 certbot 的 IP 证书 | `publicPort`（缺省 **33080**），frps 纯 TCP 透传 |
+| 公网入口 | `443`；域名由 Caddy 自动管理证书，公网 IPv4 用 certbot IP 证书 | `publicPort`（缺省 **33080**），frps 纯 TCP 透传 |
 | frpc proxy 类型 | `type = "http"` + `customDomains` | `type = "tcp"` + `remotePort = publicPort` |
-| 证书来源 | Let's Encrypt（约 6 天，certbot.timer 续期） | 网关自签 CA（5 年）+ 叶证书（397 天）→ **零续期运维** |
+| 证书来源 | 域名由 Caddy 自动管理；公网 IPv4 用 Let's Encrypt 短期证书（约 6 天） | 网关自签 CA（5 年）+ 叶证书（397 天）；需监控到期并处理 CA 轮换与重新配对 |
 | App 信任 | 系统信任库（公开 CA） | 固定网关 CA（`GET /mobile-access/ca.cer`） |
-| 手机浏览器 | 正常 | 提示证书不受信任（App 不受影响） |
+| 手机浏览器 | 正常 | 提示证书不受信任；仅包含远程 CA 固定功能的新版 App 可扫码使用 |
 
 ## 代码地图
 
@@ -44,8 +46,8 @@
 - `vps_ipv6_ssh_not_supported`：SSH 目标是 IPv6（所有 VPS 操作共用校验）。
 - `frp_config_missing`：无已保存配置且请求字段空白。
 - `vps_uninstall_failed`：清理脚本未回 `DSH_MOBILE_UNINSTALL_OK`。
-- `frp_attach_mode_requires_vhost_port`（409）：`mode='attach'` 且为公网 IP 证书档时未提供用户 frps 的真实 `vhostHttpPort`。**绝不允许退化为默认 7080**：探测错误的端口会让「明文 vhost 公网可达」的闸门假阴性放行。自签档（`entryTls='self-signed'`）没有 vhost，无需该端口。
-- `frp_attach_cert_unknown`（409）：自签入口的 CA/叶证书缺失、不可读或无法签发；面板据此提示重新连接以重签。
+- `frp_attach_mode_requires_vhost_port`（409）：`mode='attach'` 且为公开 CA 证书档时未提供用户 frps 的真实 `vhostHttpPort`。**绝不允许退化为默认 7080**：探测错误的端口会让「明文 vhost 公网可达」的闸门假阴性放行。自签档（`entryTls='self-signed'`）没有 vhost，无需该端口。
+- `frp_attach_cert_unknown`（409）：自签入口的 CA/叶证书缺失、不可读或无法签发；需检查私有入口证书状态，不得绕过指纹固定。`frp_ingress_ca_expired` 表示 CA 已过期，不能静默生成新 CA 继续旧配对，须重新配置并让手机核对新指纹后重新配对。
 - `frp_entry_tls_invalid`（409）：入口证书档与置备方式不兼容（`self-signed` 仅限 `attach`），或对该档调用了只服务 Caddy 的模板函数。
 - 明文 vhost 暴露**继续沿用**既有 `frp_vhost_publicly_reachable` / `frp_vhost_probe_failed`，未新造代码。
 
@@ -78,7 +80,7 @@ cd apps/mobile/android
 - 自签档：网关**只监听 `127.0.0.1`**（公网入口是 frps 的 TCP 代理，不是网关直绑）；`allowedCidrs` 恒为 `127.0.0.0/8`；**绝不**把 `listenHost` 设为 `0.0.0.0`。
 - 自签档不做 vhost 探测（无明文 vhost）；其等价暴露面是「公网入口端口可直连」——**这是设计使然**（入口本身就是网关的 HTTPS 服务），安全依赖网关自身的设备配对与鉴权。
 - attach 模式不得触碰用户既有 frps 配置与 Caddyfile 其他内容；本机也不改动 DSH 自身配置。
-- Token / 私钥 / CA 私钥路径不进日志、不进状态、不进 localStorage；`GET remote/frp/self-check` 只回布尔量、寿命与指纹。
+- Token / 私钥 / CA 私钥路径不进日志、不进状态、不进 localStorage；`GET remote/frp/self-check` 可返回非秘密的公开入口、端口、证书寿命与 CA 指纹，但不返回 Token 或私钥。
 
 ## 真机验证记录（2026-09-03，腾讯云 Ubuntu 24.04，IP 模式）
 
@@ -92,7 +94,7 @@ cd apps/mobile/android
 
 ## 安全边界（改动时复核）
 
-- frps HTTP vhost 永远只绑 `127.0.0.1:7080`；公网只暴露 Caddy HTTPS。
+- 公开证书 HTTP 档的 frps vhost 仅可由回环访问；端口须为该实例实际配置的 `vhostHTTPPort`（托管默认 7080），公网只暴露 Caddy HTTPS。自签 TCP 档没有 DSH 的明文 HTTP vhost，但要审查既有 frps 的其他代理监听。
 - 永远不回退到 `accept-new`；已知密钥静默替换必须失败。
 - 卸载脚本只删 DSH Mobile 前缀路径、自有 systemd 单元、带标记 UFW 规则；Caddyfile 仅在含管理标记时清空为占位。
 - 私钥路径只在本机使用；Token 不进日志/状态/localStorage。

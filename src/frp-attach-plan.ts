@@ -116,7 +116,7 @@ export function createFrpAttachPlan(settings: FrpSettings, options: FrpAttachOpt
             `ss -lnt | grep -E ':(${String(settings.serverPort)}|${String(publicPort)})\\b' || true`,
           ]),
           optional: false,
-          verifyHint: `frps 控制端口 ${String(settings.serverPort)} 应处于监听状态。`,
+          verifyHint: `frps 控制端口 ${String(settings.serverPort)} 应监听；入口 ${String(publicPort)} 的 Local Address 不应是 127.0.0.1。若仅回环监听，防火墙放行也无法公网访问。`,
         }),
         Object.freeze({
           id: 'verify-entry' as const,
@@ -126,12 +126,13 @@ export function createFrpAttachPlan(settings: FrpSettings, options: FrpAttachOpt
             `curl -k -sS -o /dev/null -w '%{http_code}\\n' https://${publicHost}:${String(publicPort)}${FRP_ATTACH_DISCOVERY_PATH}`,
           ]),
           optional: false,
-          verifyHint: '期望输出 200；返回 000 说明端口未放行、frpc 未启动或 frps 未转发。',
+          verifyHint: '期望输出 200；curl -k 仅验证连通性，不验证服务器身份；App 配对后会固定网关 CA。返回 000 时检查端口与转发。',
         }),
       ]),
       warnings: Object.freeze([
         ...commonWarnings,
         FRP_ATTACH_SELF_SIGNED_DECLARATION,
+        '现有 frps 的 TCP 代理必须已监听公网地址；若 proxyBindAddr=127.0.0.1，单靠开放防火墙端口无法连通，请改选公网证书 + Caddy 模式。插件不会修改你的 frps。',
         '手机浏览器访问自签入口会提示证书不受信任 —— 请用 App 扫码配对；App 已固定网关 CA，不需要公开证书。',
         '切勿把网关 listenHost 改成 0.0.0.0：公网入口由 frps 的 TCP 代理提供，网关只监听 127.0.0.1。',
       ]),
@@ -141,6 +142,24 @@ export function createFrpAttachPlan(settings: FrpSettings, options: FrpAttachOpt
   const vhostHttpPort = parts.vhostHttpPort ?? 0
   const publicHost = parts.publicHost
   const certGuide = parts.certGuide
+  const certificateSteps: FrpAttachPlanStep[] = certGuide.length === 0 ? [] : [
+    Object.freeze({
+      id: 'issue-ip-cert' as const,
+      title: 'frpAttachStepIssueCert',
+      label: '为公网 IP 签发受信任证书（certbot）',
+      commands: Object.freeze([...certGuide]),
+      optional: false,
+      verifyHint: `证书应落到 /etc/letsencrypt/live/${publicHost}/ 并安装到 Caddy 证书目录。`,
+    }),
+    Object.freeze({
+      id: 'enable-cert-timer' as const,
+      title: 'frpAttachStepCertTimer',
+      label: '确认 certbot 续期定时器并更新 Caddy 证书文件',
+      commands: Object.freeze(['systemctl list-timers certbot.timer --all || true']),
+      optional: false,
+      verifyHint: '公网 IP 证书有效期较短；续期后还须将新证书安装到 Caddy 并重载。',
+    }),
+  ]
   return Object.freeze({
     mode: 'attach' as const,
     entryTls: resolveFrpEntryTls(settings),
@@ -176,22 +195,7 @@ export function createFrpAttachPlan(settings: FrpSettings, options: FrpAttachOpt
         optional: false,
         verifyHint: 'caddy validate 通过且 reload 无报错；Caddyfile 中你自己原有的站点内容保持不变。',
       }),
-      Object.freeze({
-        id: 'issue-ip-cert' as const,
-        title: 'frpAttachStepIssueCert',
-        label: '为公网 IP 签发受信任证书（certbot 一次性）',
-        commands: Object.freeze([...certGuide]),
-        optional: false,
-        verifyHint: `证书应落到 /etc/letsencrypt/live/${publicHost}/ 并安装到 Caddy 证书目录。`,
-      }),
-      Object.freeze({
-        id: 'enable-cert-timer' as const,
-        title: 'frpAttachStepCertTimer',
-        label: '确认 certbot 每日续期定时器已启用',
-        commands: Object.freeze(['systemctl list-timers certbot.timer --all || true']),
-        optional: false,
-        verifyHint: '公网 IP 证书有效期约 6 天，续期定时器缺失会在到期后整条链路中断。',
-      }),
+      ...certificateSteps,
       Object.freeze({
         id: 'verify-https' as const,
         title: 'frpAttachStepVerifyHttps',
@@ -200,7 +204,9 @@ export function createFrpAttachPlan(settings: FrpSettings, options: FrpAttachOpt
           `curl -sS -o /dev/null -w '%{http_code}\\n' https://${publicHost}${FRP_ATTACH_DISCOVERY_PATH}`,
         ]),
         optional: true,
-        verifyHint: '期望输出 200；证书错误说明 certbot 证书未安装或 Caddy 未重载。',
+        verifyHint: certGuide.length === 0
+          ? '期望输出 200；证书错误时检查 DNS、80/443 端口和 Caddy 日志。'
+          : '期望输出 200；证书错误时检查 certbot 证书是否安装并重载 Caddy。',
       }),
     ]),
     warnings: Object.freeze([

@@ -2,6 +2,12 @@
 
 Notable changes to DSH Mobile are recorded here. GitHub Releases remain the source for downloadable packages and complete generated commit notes.
 
+## Unreleased
+
+- Use the configured HTTP proxy as a second, bounded remote-health probe only when the direct probe fails. The diagnostic respects `NO_PROXY`, reports proxy-only reachability as a warning rather than proof that a phone can connect, and retains the direct result if both routes fail (thanks @abworks-dev for [PR #99](https://github.com/saya-ch/dsh-mobile/pull/99)).
+- Add a zero-SSH path for attaching to an existing frps without installing, changing, or restarting it. Users can choose a publicly trusted Caddy HTTPS entry through a loopback-only HTTP vhost, or a raw TCP entry whose self-signed gateway CA the new Android app pins during pairing. The latter uses a public IPv4 address and a finite-lived CA and leaf; the released 0.4.5 app does not support it (thanks @liudasheng for [PR #100](https://github.com/saya-ch/dsh-mobile/pull/100)).
+- Harden the integration before release: require a CA-bound `dsh2` pairing key for self-signed ingress, prevent saved FRP tokens from being returned to page scripts, retain the CA identity across restarts, and renew the ingress leaf without replacing its CA.
+
 ## 0.4.5 - 2026-09-23
 
 - Support the document-relative plugin URLs introduced in DSH 0.1.7 without weakening the same-origin `/plugins/` check. This fixes mobile boot batches returning `502 upstream_unavailable`; local and remote gateways were verified against DSH 0.1.7-alpha.2 (thanks @azri57806-design for [#97](https://github.com/saya-ch/dsh-mobile/issues/97)).

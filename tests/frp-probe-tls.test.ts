@@ -273,7 +273,7 @@ describe('FRP discovery probe against a real HTTPS entry', () => {
 describe('FRP discovery probe target derivation', () => {
   it('dials the public entry port and pins the ingress CA for the self-signed entry', async () => {
     const { executable, config, directory } = await frpFixture({
-      publicOrigin: 'https://dsh.example.com',
+      publicOrigin: 'https://1.2.3.4',
       mode: 'attach',
       entryTls: 'self-signed',
       publicPort: 33_080,
@@ -293,14 +293,14 @@ describe('FRP discovery probe target derivation', () => {
     // Defect 2: the port comes from `resolveFrpPublicPort`, not from the origin.
     expect(probeDiscovery).toHaveBeenCalledWith(
       {
-        origin: 'https://dsh.example.com:33080',
+        origin: 'https://1.2.3.4:33080',
         trustAnchorPem: '-----BEGIN CERTIFICATE-----\nfixture\n-----END CERTIFICATE-----\n',
       },
       CA_ADVERTISED_IDENTITY,
       expect.any(AbortSignal),
     )
-    // The panel keeps reporting the saved origin: only the dial target changed.
-    expect(controller.status().origin).toBe('https://dsh.example.com')
+    // The panel reports the entry users can actually open, not the saved :443 base.
+    expect(controller.status().origin).toBe('https://1.2.3.4:33080')
     await controller.close()
   })
 
@@ -327,6 +327,7 @@ describe('FRP discovery probe target derivation', () => {
       CA_ADVERTISED_IDENTITY,
       expect.any(AbortSignal),
     )
+    expect(controller.status().origin).toBe('https://1.2.3.4:44443')
     await controller.close()
   })
 
@@ -355,9 +356,9 @@ describe('FRP discovery probe target derivation', () => {
     await controller.close()
   })
 
-  it('falls back to the default chain, and its timeout, when the CA cannot be read', async () => {
+  it('stops explicitly when the pinned ingress CA cannot be read', async () => {
     const { executable, config, directory } = await frpFixture({
-      publicOrigin: 'https://dsh.example.com',
+      publicOrigin: 'https://1.2.3.4',
       mode: 'attach',
       entryTls: 'self-signed',
       publicPort: 33_080,
@@ -376,14 +377,9 @@ describe('FRP discovery probe target derivation', () => {
     await controller.initialize()
     await controller.setEnabled(true)
     await vi.waitFor(() => {
-      expect(controller.status()).toEqual({ enabled: true, state: 'error', errorCode: 'frp_start_timeout' })
+      expect(controller.status()).toEqual({ enabled: true, state: 'error', errorCode: 'frp_ingress_ca_invalid' })
     })
-    // No new error code: an unreadable anchor only means "keep the old chain".
-    expect(probeDiscovery).toHaveBeenCalledWith(
-      { origin: 'https://dsh.example.com:33080' },
-      CA_ADVERTISED_IDENTITY,
-      expect.any(AbortSignal),
-    )
+    expect(probeDiscovery).not.toHaveBeenCalled()
     await controller.close()
   })
 

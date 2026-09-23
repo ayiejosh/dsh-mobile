@@ -652,6 +652,11 @@ function installControl(): { remove: () => void; toggle: () => void; isOpen: () 
     frp_attach_mode_requires_vhost_port: 'frpAttachModeRequiresVhostPort',
     frp_attach_cert_unknown: 'frpAttachCertUnknownError',
     frp_entry_tls_invalid: 'frpEntryTlsInvalid',
+    frp_self_signed_requires_public_ipv4: 'frpSelfSignedRequiresPublicIpv4',
+    frp_ingress_ca_expired: 'frpIngressCaExpired',
+    frp_ingress_ca_invalid: 'frpIngressCaInvalid',
+    frp_ingress_ca_changed: 'frpIngressCaChanged',
+    frp_ingress_renewal_failed: 'frpIngressRenewalFailed',
     ...ORIGIN_ERROR_MESSAGE_KEYS,
   }
 
@@ -896,8 +901,9 @@ function installControl(): { remove: () => void; toggle: () => void; isOpen: () 
   }
   frpEntryTlsLabel.append(frpEntryTls)
   const frpVhostLabel = element('label', 'dsh-mobile-control__field'); frpVhostLabel.textContent = t('frpVhostHttpPort')
-  const frpVhostPort = element('input'); frpVhostPort.type = 'number'; frpVhostPort.inputMode = 'numeric'; frpVhostPort.min = '1'; frpVhostPort.max = '65535'; frpVhostPort.value = '7080'; frpVhostPort.placeholder = '7080'
-  const frpVhostHint = element('p', 'dsh-mobile-control__frp-hint'); frpVhostHint.textContent = t('frpVhostHttpPortHint')
+  const frpVhostPort = element('input'); frpVhostPort.type = 'number'; frpVhostPort.inputMode = 'numeric'; frpVhostPort.min = '1'; frpVhostPort.max = '65535'; frpVhostPort.placeholder = '7080'
+  const frpVhostHint = element('p', 'dsh-mobile-control__frp-hint'); frpVhostHint.id = 'dsh-mobile-frp-vhost-hint'; frpVhostHint.textContent = t('frpVhostHttpPortHint')
+  frpVhostPort.setAttribute('aria-describedby', frpVhostHint.id)
   frpVhostLabel.append(frpVhostPort, frpVhostHint)
   const frpPublicPortLabel = element('label', 'dsh-mobile-control__field'); frpPublicPortLabel.textContent = t('frpPublicPort')
   const frpPublicPort = element('input'); frpPublicPort.type = 'number'; frpPublicPort.inputMode = 'numeric'; frpPublicPort.min = '1'; frpPublicPort.max = '65535'; frpPublicPort.value = '33080'; frpPublicPort.placeholder = '33080'
@@ -1265,6 +1271,10 @@ function installControl(): { remove: () => void; toggle: () => void; isOpen: () 
   let configuredFrpPublicPort = 33_080
   let frpConfiguredMode: 'deploy' | 'attach' = 'deploy'
   let frpConfiguredEntryTls: 'public-ip-cert' | 'self-signed' = 'public-ip-cert'
+  let frpModeDraft = false
+  let frpEntryTlsDraft = false
+  let frpVhostDraft = false
+  let frpAttachVhostExplicit = false
   let providerInfoPinned = false
   let providerInfoHovered = false
   let previousAccessView: 'lan' | 'remote' = 'lan'
@@ -1659,22 +1669,37 @@ function installControl(): { remove: () => void; toggle: () => void; isOpen: () 
       frpConfiguredMode = configuredFrpMode
       frpConfiguredEntryTls = configuredFrpEntryTls
     }
-    if (frpConfigured && frpMode.value !== configuredFrpMode) frpMode.value = configuredFrpMode
-    if (frpConfigured && frpEntryTls.value !== configuredFrpEntryTls) frpEntryTls.value = configuredFrpEntryTls
+    if (frpConfigured && !frpModeDraft) frpMode.value = configuredFrpMode
+    if (frpConfigured && !frpEntryTlsDraft) frpEntryTls.value = configuredFrpEntryTls
     if (typeof frpConfiguration.vhostHttpPort === 'number') configuredFrpVhostPort = frpConfiguration.vhostHttpPort
     if (typeof frpConfiguration.publicPort === 'number') configuredFrpPublicPort = frpConfiguration.publicPort
-    if (frpVhostPort.value === '' || frpVhostPort.value === '7080') frpVhostPort.value = String(configuredFrpVhostPort)
+    if (!frpVhostDraft) {
+      if (frpMode.value === 'attach' && configuredFrpMode === 'attach' && configuredFrpEntryTls === 'public-ip-cert') {
+        frpVhostPort.value = String(configuredFrpVhostPort)
+        frpAttachVhostExplicit = true
+      } else {
+        frpVhostPort.value = frpMode.value === 'deploy' ? String(configuredFrpVhostPort) : ''
+      }
+    }
     if (frpPublicPort.value === '' || frpPublicPort.value === '33080') frpPublicPort.value = String(configuredFrpPublicPort)
     // Attach mode never installs or deploys anything on the VPS: the runbook is
     // the whole deliverable, so the SSH/deploy controls disappear.
     const attachSelected = frpMode.value === 'attach'
     const selfSignedSelected = attachSelected && frpEntryTls.value === 'self-signed'
+    frpStep2Title.textContent = t(attachSelected ? 'frpStep2TitleAttach' : 'frpStep2Title')
+    frpStep2Text.textContent = t(attachSelected ? 'frpStep2TextAttach' : 'frpStep2Text')
+    frpStep4Text.textContent = t(attachSelected ? 'frpStep4TextAttach' : 'frpStep4Text')
+    frpAppRequirement.textContent = t(selfSignedSelected ? 'frpAppRequirementSelfSigned' : 'frpAppRequirement')
     frpCopyTemplate.hidden = attachSelected
     frpCopyAttachPlan.hidden = !attachSelected
     frpCopyAttachToken.hidden = !attachSelected
     frpSelfCheckButton.hidden = !frpConfigured
     frpVhostPort.disabled = selfSignedSelected
     frpVhostLabel.hidden = selfSignedSelected
+    frpVhostPort.required = attachSelected && !selfSignedSelected
+    frpVhostHint.textContent = frpVhostPort.required ? t('frpAttachModeRequiresVhostPort') : t('frpVhostHttpPortHint')
+    frpEntryTls.disabled = !attachSelected
+    frpEntryTlsLabel.hidden = !attachSelected
     frpPublicPortLabel.hidden = !selfSignedSelected
     vpsDeployText.hidden = attachSelected
     vpsChangesTitle.hidden = attachSelected
@@ -1697,7 +1722,8 @@ function installControl(): { remove: () => void; toggle: () => void; isOpen: () 
     frpComponentStatus.textContent = !frpSupported
       ? t('frpUnsupported')
       : frpInstalled ? t('frpComponentReady', { version: frpVersion }) : t('frpNotInstalled')
-    frpConfigurationStatus.textContent = frpConfigured ? t('frpConfigurationReady') : t('frpConfigurationMissing')
+    frpConfigurationStatus.textContent = frpConfigured
+      ? t('frpConfigurationReady') : t(attachSelected ? 'frpConfigurationMissingAttach' : 'frpConfigurationMissing')
     frpOverview.hidden = !frpConfigured
     frpOverviewEndpoint.textContent = configuredFrpOrigin === ''
       ? configuredFrpServer
@@ -1820,6 +1846,36 @@ function installControl(): { remove: () => void; toggle: () => void; isOpen: () 
     }
     if (!needsFunnelSetup) remoteSetupPending = false
   }
+  frpMode.addEventListener('change', () => {
+    frpModeDraft = true
+    if (frpMode.value === 'attach') {
+      if (!frpAttachVhostExplicit) {
+        frpVhostPort.value = ''
+        frpVhostDraft = true
+      }
+    } else {
+      frpEntryTls.value = 'public-ip-cert'
+      frpEntryTlsDraft = true
+      if (frpVhostPort.value === '') frpVhostPort.value = String(configuredFrpVhostPort)
+      frpVhostDraft = true
+    }
+    frpVhostPort.removeAttribute('aria-invalid')
+    renderRemote(latestRemoteState)
+  })
+  frpEntryTls.addEventListener('change', () => {
+    frpEntryTlsDraft = true
+    if (frpMode.value === 'attach' && frpEntryTls.value === 'public-ip-cert' && !frpAttachVhostExplicit) {
+      frpVhostPort.value = ''
+      frpVhostDraft = true
+    }
+    frpVhostPort.removeAttribute('aria-invalid')
+    renderRemote(latestRemoteState)
+  })
+  frpVhostPort.addEventListener('input', () => {
+    frpVhostDraft = true
+    if (frpMode.value === 'attach') frpAttachVhostExplicit = frpVhostPort.value.trim() !== ''
+    frpVhostPort.removeAttribute('aria-invalid')
+  })
   let remoteLoadInFlight = false
   const loadRemote = (): void => {
     if (remoteLoadInFlight || originFormBusy) return
@@ -2067,8 +2123,22 @@ function installControl(): { remove: () => void; toggle: () => void; isOpen: () 
     frp_attach_mode_requires_vhost_port: 'frpAttachModeRequiresVhostPort',
     frp_attach_cert_unknown: 'frpAttachCertUnknownError',
     frp_entry_tls_invalid: 'frpEntryTlsInvalid',
+    frp_self_signed_requires_public_ipv4: 'frpSelfSignedRequiresPublicIpv4',
+    frp_ingress_ca_expired: 'frpIngressCaExpired',
+    frp_ingress_ca_invalid: 'frpIngressCaInvalid',
+    frp_ingress_ca_changed: 'frpIngressCaChanged',
+    frp_ingress_renewal_failed: 'frpIngressRenewalFailed',
   }
   const frpAttachErrorText = (code: string): string => t(frpAttachErrorKeys[code] ?? 'frpInputInvalid')
+  const showFrpAttachError = (code: string): void => {
+    const message = frpAttachErrorText(code)
+    if (code === 'frp_attach_mode_requires_vhost_port') {
+      frpVhostPort.setAttribute('aria-invalid', 'true')
+      frpVhostHint.textContent = message
+      frpVhostPort.focus()
+    }
+    remoteStatus.textContent = message
+  }
   frpCopyAttachPlan.addEventListener('click', () => {
     const form = frpForm()
     if (!validFrpServer(form.serverAddress) || !Number.isSafeInteger(form.serverPort)
@@ -2081,7 +2151,7 @@ function installControl(): { remove: () => void; toggle: () => void; isOpen: () 
       const attachForm = attachClipboardForm(form)
       const code = frpAttachFormErrorCode(attachForm)
       if (code !== undefined) {
-        remoteStatus.textContent = frpAttachErrorText(code)
+        showFrpAttachError(code)
         return
       }
       void navigator.clipboard.writeText(createFrpAttachTemplateForClipboard(attachForm))
@@ -2106,12 +2176,7 @@ function installControl(): { remove: () => void; toggle: () => void; isOpen: () 
       .catch(error => { remoteStatus.textContent = t('frpAttachPlanFailed', { error: String(error) }) })
       .finally(() => { remoteProviderBusy = false; frpCopyAttachPlan.disabled = false })
   })
-  /**
-   * Explicit reveal: copy the frpc.toml exactly as the plugin writes it, token
-   * included. It is a separate button on purpose — the default copy above never
-   * emits a plaintext token — and the text goes to the clipboard only, so no
-   * state, log, or localStorage entry ever carries it.
-   */
+  /** Copy a token-bearing frpc.toml only from the token the user just typed. */
   frpCopyAttachToken.addEventListener('click', () => {
     const form = frpForm()
     if (!validFrpServer(form.serverAddress) || !Number.isSafeInteger(form.serverPort)
@@ -2124,7 +2189,7 @@ function installControl(): { remove: () => void; toggle: () => void; isOpen: () 
       const attachForm = attachClipboardForm(form)
       const code = frpAttachFormErrorCode(attachForm)
       if (code !== undefined) {
-        remoteStatus.textContent = frpAttachErrorText(code)
+        showFrpAttachError(code)
         return
       }
       void navigator.clipboard.writeText(createFrpAttachFrpcTomlForClipboard(attachForm, { revealToken: true }))
@@ -2132,29 +2197,8 @@ function installControl(): { remove: () => void; toggle: () => void; isOpen: () 
           () => { remoteStatus.textContent = t('frpAttachTokenFailed', { error: t('templateCopyFailed') }) })
       return
     }
-    if (!frpConfigured) {
-      remoteStatus.textContent = t('frpInputInvalid')
-      return
-    }
-    // The saved token is deliberately unreadable here, so the loopback host
-    // performs the one explicit reveal this panel offers.
-    remoteProviderBusy = true
-    frpCopyAttachToken.disabled = true
-    void controlRequestJson('/api/mobile-access/remote/frp/attach-plan', {
-      method: 'POST',
-      body: JSON.stringify({ ...form, revealToken: true }),
-    })
-      .then(data => {
-        const plan = data.frpAttachPlan !== null && typeof data.frpAttachPlan === 'object'
-          ? data.frpAttachPlan as Record<string, unknown> : {}
-        const local = plan.local !== null && typeof plan.local === 'object'
-          ? plan.local as Record<string, unknown> : {}
-        const text = typeof local.frpcToml === 'string' ? local.frpcToml : ''
-        if (text === '') throw new Error('frp_settings_invalid')
-        return navigator.clipboard.writeText(text).then(() => { remoteStatus.textContent = t('frpAttachTokenCopied') })
-      }, error => { remoteStatus.textContent = frpAttachErrorText(String(error)); return undefined })
-      .catch(error => { remoteStatus.textContent = t('frpAttachTokenFailed', { error: String(error) }) })
-      .finally(() => { remoteProviderBusy = false; frpCopyAttachToken.disabled = false })
+    frpToken.focus()
+    remoteStatus.textContent = t('frpAttachTokenReenter')
   })
   const certificateStatusText = (status: Record<string, unknown> | undefined): string => {
     if (status === undefined) return ''
@@ -2164,6 +2208,15 @@ function installControl(): { remove: () => void; toggle: () => void; isOpen: () 
     if (state === 'expiring') return t('frpAttachCertExpiring', { days })
     if (state === 'expired') return t('frpAttachCertExpired')
     return t('frpAttachCertUnknown')
+  }
+  const caStatusText = (status: Record<string, unknown> | undefined): string => {
+    if (status === undefined) return ''
+    const state = typeof status.state === 'string' ? status.state : 'unknown'
+    const days = typeof status.daysRemaining === 'number' ? String(status.daysRemaining) : '0'
+    if (state === 'ok') return t('frpAttachCaOk', { days })
+    if (state === 'expiring') return t('frpAttachCaExpiring', { days })
+    if (state === 'expired') return t('frpIngressCaExpired')
+    return t('frpIngressCaInvalid')
   }
   frpSelfCheckButton.addEventListener('click', () => {
     if (remoteProviderBusy) return
@@ -2176,6 +2229,10 @@ function installControl(): { remove: () => void; toggle: () => void; isOpen: () 
         const check = data.frpSelfCheck !== null && typeof data.frpSelfCheck === 'object'
           ? data.frpSelfCheck as Record<string, unknown> : {}
         const lines: string[] = []
+        const caCertificate = check.caCertificate !== null && typeof check.caCertificate === 'object'
+          ? check.caCertificate as Record<string, unknown> : undefined
+        const caText = caStatusText(caCertificate)
+        if (caText !== '') lines.push(caText)
         const certificate = check.certificate !== null && typeof check.certificate === 'object'
           ? check.certificate as Record<string, unknown> : undefined
         const certificateText = certificateStatusText(certificate)
@@ -2444,7 +2501,8 @@ function installControl(): { remove: () => void; toggle: () => void; isOpen: () 
         ? frpAttachFormErrorCode(attachClipboardForm(form))
         : (validFrpForm(form) ? undefined : 'frp_settings_invalid')
       if (code !== undefined) {
-        remoteStatus.textContent = form.mode === 'attach' ? frpAttachErrorText(code) : t('frpInputInvalid')
+        if (form.mode === 'attach') showFrpAttachError(code)
+        else remoteStatus.textContent = t('frpInputInvalid')
         return
       }
     }
@@ -2468,7 +2526,8 @@ function installControl(): { remove: () => void; toggle: () => void; isOpen: () 
       })
   })
   frpPurge.addEventListener('click', () => {
-    if (remoteProviderBusy || !window.confirm(t('purgeFrpConfirm'))) return
+    if (remoteProviderBusy || !window.confirm(t(frpConfiguredMode === 'attach' && frpConfiguredEntryTls === 'self-signed'
+      ? 'purgeFrpConfirmSelfSigned' : 'purgeFrpConfirm'))) return
     remoteProviderBusy = true
     frpPurge.disabled = true
     remoteStatus.textContent = t('purgingFrp')
@@ -2689,10 +2748,12 @@ function installControl(): { remove: () => void; toggle: () => void; isOpen: () 
     const localizedEntryCopy = (entry: Record<string, unknown>): { readonly detail: string; readonly action: string } => {
       const serverCopy = diagnosticServerCopy(entry)
       const reason = typeof entry.reason === 'string' ? entry.reason : ''
-      const catalog = DIAGNOSTIC_REASON_MESSAGES[locale] as Readonly<Record<string, readonly [string, string]>>
-      const templates = catalog[reason]
-      if (templates === undefined) return serverCopy
       const facts = entry.facts !== null && typeof entry.facts === 'object' ? entry.facts as Record<string, unknown> : {}
+      const copyReason = facts.viaProxy === true && (reason === 'remote-ready' || reason === 'remote-rate-limited')
+        ? `${reason}-via-proxy` : reason
+      const catalog = DIAGNOSTIC_REASON_MESSAGES[locale] as Readonly<Record<string, readonly [string, string]>>
+      const templates = catalog[copyReason]
+      if (templates === undefined) return serverCopy
       // Diagnostics read as sentences, so an internal provider id or a raw controller
       // code belongs in the report, not in the prose: it renders as
       // "Remote access through origin is currently off." or "reported gateway_start_failed".
@@ -2727,7 +2788,7 @@ function installControl(): { remove: () => void; toggle: () => void; isOpen: () 
           sidecar_launch_failed: 'remoteUnavailableTailscale', sidecar_stopped: 'controlChannelFailed', sidecar_exited: 'controlChannelFailed', control_channel_failed: 'controlChannelFailed',
           cpolar_component_missing: 'cpolarMissing', cpolar_component_invalid: 'cpolarInvalid', cpolar_config_missing: 'cpolarConfigMissing', cpolar_config_invalid: 'cpolarConfigInvalid', cpolar_start_timeout: 'cpolarTimeout', cpolar_stopped: 'cpolarStopped', cpolar_exited: 'cpolarExited',
           cloudflared_component_missing: 'cloudflaredMissing', cloudflared_component_invalid: 'cloudflaredInvalid', cloudflared_component_unsupported: 'cloudflaredComponentUnsupported', cloudflared_port_unavailable: 'cloudflaredPortUnavailable', cloudflared_port_reservation_failed: 'cloudflaredPortReservationFailed', cloudflared_launch_failed: 'cloudflaredLaunchFailed', cloudflared_start_timeout: 'cloudflaredTimeout', cloudflared_stopped: 'cloudflaredStopped', cloudflared_exited: 'cloudflaredExited', cloudflared_invalid_origin: 'cloudflaredOriginInvalid', cloudflared_tunnel_port_unavailable: 'cloudflaredTunnelPortUnavailable', cloudflared_tunnel_config_invalid: 'cloudflaredTunnelInvalid', cloudflared_tunnel_target_invalid: 'cloudflaredTunnelTargetInvalid', cloudflared_download_hash_mismatch: 'cloudflaredDownloadHashMismatch', cloudflared_download_size_mismatch: 'cloudflaredDownloadSizeMismatch', cloudflared_executable_hash_mismatch: 'cloudflaredExecutableHashMismatch',
-          frp_component_missing: 'frpMissing', frp_component_invalid: 'frpInvalid', frp_config_missing: 'frpConfigMissing', frp_config_verify_failed: 'frpConfigVerifyFailed', frp_vhost_publicly_reachable: 'frpVhostPublic', frp_vhost_probe_failed: 'frpVhostProbeFailed', frp_launch_failed: 'frpLaunchFailed', frp_start_timeout: 'frpTimeout', frp_discovery_mismatch: 'frpDiscoveryMismatch', frp_discovery_invalid: 'frpDiscoveryInvalid', frp_stopped: 'frpStopped', frp_exited: 'frpExited', gateway_start_failed: 'gatewayStartFailed', frp_attach_mode_requires_vhost_port: 'frpAttachModeRequiresVhostPort', frp_attach_cert_unknown: 'frpAttachCertUnknownError', frp_entry_tls_invalid: 'frpEntryTlsInvalid',
+          frp_component_missing: 'frpMissing', frp_component_invalid: 'frpInvalid', frp_config_missing: 'frpConfigMissing', frp_config_verify_failed: 'frpConfigVerifyFailed', frp_vhost_publicly_reachable: 'frpVhostPublic', frp_vhost_probe_failed: 'frpVhostProbeFailed', frp_launch_failed: 'frpLaunchFailed', frp_start_timeout: 'frpTimeout', frp_discovery_mismatch: 'frpDiscoveryMismatch', frp_discovery_invalid: 'frpDiscoveryInvalid', frp_stopped: 'frpStopped', frp_exited: 'frpExited', gateway_start_failed: 'gatewayStartFailed', frp_attach_mode_requires_vhost_port: 'frpAttachModeRequiresVhostPort', frp_attach_cert_unknown: 'frpAttachCertUnknownError', frp_entry_tls_invalid: 'frpEntryTlsInvalid', frp_self_signed_requires_public_ipv4: 'frpSelfSignedRequiresPublicIpv4', frp_ingress_ca_expired: 'frpIngressCaExpired', frp_ingress_ca_invalid: 'frpIngressCaInvalid', frp_ingress_ca_changed: 'frpIngressCaChanged', frp_ingress_renewal_failed: 'frpIngressRenewalFailed',
         }
         const actionKey = controllerActionKeys[values.controllerCode ?? '']
         if (actionKey !== undefined) action = t(actionKey)

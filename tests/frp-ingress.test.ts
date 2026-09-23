@@ -1,9 +1,13 @@
 import { X509Certificate } from 'node:crypto'
+import { execFile as execFileCallback } from 'node:child_process'
+import { createServer, request as requestHttp } from 'node:http'
 import { mkdtemp, rm, stat } from 'node:fs/promises'
 import { request as httpsRequest } from 'node:https'
+import type { AddressInfo } from 'node:net'
 import type { TLSSocket } from 'node:tls'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
+import { promisify } from 'node:util'
 import { Context } from '@deepseek-ai/cordis'
 import { afterEach, describe, expect, it } from 'vitest'
 import { parseGatewayConfig } from '../src/config.js'
@@ -16,6 +20,7 @@ import { frpIngressGatewayConfig } from '../src/plugin.js'
 import { MemoryDeviceStore } from '../src/storage.js'
 
 const cleanups: Array<() => Promise<void>> = []
+const execFile = promisify(execFileCallback)
 
 afterEach(async () => {
   for (const cleanup of cleanups.splice(0).reverse()) await cleanup()
@@ -68,9 +73,16 @@ describe('self-signed FRP ingress certificate', () => {
     const leafDays = (Date.parse(ingress.leaf.validTo) - Date.now()) / 86_400_000
     expect(caDays).toBeGreaterThan(1_800)
     expect(leafDays).toBeGreaterThan(390)
-    // Private key material stays owner-only.
-    expect((await stat(ingress.paths.caKeyFile)).mode & 0o777).toBe(0o600)
-    expect((await stat(ingress.paths.keyFile)).mode & 0o777).toBe(0o600)
+    // Windows reports synthetic POSIX bits; inspect the actual ACL there instead.
+    for (const keyFile of [ingress.paths.caKeyFile, ingress.paths.keyFile]) {
+      if (process.platform === 'win32') {
+        const { stdout } = await execFile('icacls.exe', [keyFile], { encoding: 'utf8', windowsHide: true })
+        expect(stdout).not.toContain('(I)')
+        expect(stdout).not.toMatch(/Everyone|Authenticated Users|BUILTIN\\Users|CodexSandboxUsers/iu)
+      } else {
+        expect((await stat(keyFile)).mode & 0o777).toBe(0o600)
+      }
+    }
     // A second start reuses the same leaf instead of re-signing on every boot.
     const again = await ensureFrpIngressCertificate(settings(), stateFile)
     expect(again.leaf.fingerprint256).toBe(ingress.leaf.fingerprint256)
@@ -172,6 +184,33 @@ describe('self-signed FRP ingress certificate', () => {
     const discovery = await fetchOverTls('/mobile-access/discovery')
     expect(discovery.status).toBe(200)
     expect(JSON.parse(discovery.body.toString('utf8'))).toMatchObject({ instanceId: ingress.caFingerprint })
+
+    const adminRoute = gateway.localAdminRoute()
+    const adminServer = createServer((request, response) => { void adminRoute.handler(request, response) })
+    await new Promise<void>(resolve => { adminServer.listen(0, '127.0.0.1', resolve) })
+    cleanups.push(async () => { await new Promise<void>(resolve => { adminServer.close(() => resolve()) }) })
+    const adminPort = (adminServer.address() as AddressInfo).port
+    const authority = `127.0.0.1:${String(adminPort)}`
+    const pairing = await new Promise<{ status: number; body: string }>((resolve, reject) => {
+      const body = '{}'
+      const request = requestHttp({
+        hostname: '127.0.0.1', port: adminPort, path: '/api/mobile-access/pairing/open', method: 'POST', agent: false,
+        headers: { host: authority, origin: `http://${authority}`, 'sec-fetch-site': 'same-origin',
+          'content-type': 'application/json', 'content-length': Buffer.byteLength(body) },
+      }, response => {
+        const chunks: Buffer[] = []
+        response.on('data', chunk => { chunks.push(Buffer.from(chunk)) })
+        response.once('end', () => { resolve({ status: response.statusCode ?? 0, body: Buffer.concat(chunks).toString('utf8') }) })
+      })
+      request.once('error', reject)
+      request.end(body)
+    })
+    expect(pairing.status).toBe(201)
+    const opened = JSON.parse(pairing.body) as { token: string; appKey: string; pairUrl: string; appPairUrl: string }
+    expect(opened.appKey).toBe(`dsh2.${ingress.caFingerprint}.${opened.token}`)
+    expect(opened.pairUrl).toBe(`https://1.2.3.4:33080/mobile-access/pair#key=${opened.appKey}`)
+    expect(opened.appPairUrl).toBe(opened.pairUrl)
+    expect(opened.pairUrl).not.toContain('#instance=')
 
     const check = await frpIngressSelfCheck(active, stateFile)
     expect(check).toMatchObject({

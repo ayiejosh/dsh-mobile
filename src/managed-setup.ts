@@ -229,6 +229,15 @@ function assertMatchingCa(certPem: string, keyPem: string): X509Certificate {
   return certificate
 }
 
+/** Read an existing managed CA without ever generating a replacement identity. */
+export async function readManagedCa(setup: ManagedSetup['tls']): Promise<X509Certificate> {
+  const [certPem, keyPem] = await Promise.all([
+    readFile(setup.caCertFile, 'utf8'),
+    readFile(setup.caKeyFile, 'utf8'),
+  ])
+  return assertMatchingCa(certPem, keyPem)
+}
+
 async function atomicWrite(file: string, contents: string | Uint8Array): Promise<void> {
   const directory = dirname(file)
   await mkdir(directory, { recursive: true, mode: 0o700 })

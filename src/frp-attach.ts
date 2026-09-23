@@ -1,3 +1,4 @@
+import { isIP } from 'node:net'
 import {
   createFrpcToml,
   isFrpSelfSignedIngress,
@@ -24,9 +25,9 @@ export const FRP_ATTACH_VPS_DECLARATION = '# 本模板不安装、不改动、�
 /** Declaration printed above the local half of an attach template. */
 export const FRP_ATTACH_LOCAL_DECLARATION = '# 本机只写入 frpc.toml 并启动 frpc：不安装、不改动本机 frps，也不改动 DSH 自身配置。'
 
-/** Declaration for the self-signed passthrough, which needs no Caddy and no certificate files at all. */
-export const FRP_ATTACH_SELF_SIGNED_DECLARATION = '# 自签穿透档不使用 Caddy、不使用任何公开证书、证书永不过期：'
-  + 'frps 只做 TCP 透传，由本机 DSH 网关自己终止 TLS。'
+/** Declaration for the self-signed passthrough, which keeps its CA on this computer. */
+export const FRP_ATTACH_SELF_SIGNED_DECLARATION = '# 自签穿透档不使用 Caddy 或公开证书：'
+  + 'frps 只做 TCP 透传，由本机 DSH 网关终止 TLS；服务端证书会在运行时续签，CA 到期需重新配对。'
 
 /** Optional inputs for attach artefacts; every field falls back to the validated settings. */
 export interface FrpAttachOptions {
@@ -182,7 +183,7 @@ export function frpAttachVpsParts(settings: FrpSettings, options: FrpAttachOptio
     selfSigned: false,
     vhostHttpPort,
     snippet: `${FRP_CADDY_SNIPPET_MARKER}\n${site.trimEnd()}\n`,
-    certGuide: Object.freeze(guideCommands(manualIpCertificateGuide(publicHost))),
+    certGuide: Object.freeze(isIP(publicHost) === 4 ? guideCommands(manualIpCertificateGuide(publicHost)) : []),
   })
 }
 
@@ -225,12 +226,14 @@ export function createFrpAttachTemplateParts(
       `ufw allow ${String(publicPort)}/tcp`,
       `ufw status | grep ${String(publicPort)}`,
       '# 若使用 firewalld / 云厂商安全组，请放行同样的 TCP 端口。',
+      '# 前提：现有 frps 的 TCP 代理已监听公网地址；若 proxyBindAddr=127.0.0.1，放行防火墙仍无法从公网访问。',
+      '# 插件不会修改你现有的 frps；不满足此前提时请改选受信任证书入口。',
       '#',
       '# 2) 确认你既有的 frps 已就绪（无需修改它的配置）：',
       'systemctl is-active frps || true',
       `ss -lnt | grep -E ':(${String(settings.serverPort)}|${String(publicPort)})\\b' || true`,
       '#',
-      '# 3) frpc 启动后，端到端验证（自签证书需 -k）：',
+      '# 3) frpc 启动后，用 -k 检查连通性；此命令不验证身份，App 配对后会固定网关 CA：',
       `curl -k -sS -o /dev/null -w '%{http_code}\\n' https://${parts.publicHost}:${String(publicPort)}${FRP_ATTACH_DISCOVERY_PATH}`,
       '# 期望输出 200。',
       '',
@@ -256,13 +259,17 @@ export function createFrpAttachTemplateParts(
     `#   ${FRP_CADDY_IMPORT_LINE}`,
     'caddy validate --config /etc/caddy/Caddyfile && systemctl reload caddy',
     '#',
-    '# 3) 公网 IP 的 HTTPS 证书（Caddy 不能为 IP 自动签发，故用 certbot 一次性签发）：',
-    ...parts.certGuide.map(line => `#   ${line}`),
+    ...(parts.certGuide.length === 0
+      ? ['# 3) 域名 HTTPS：确认 DNS 指向 VPS，开放 80/443；Caddy 会自动申请和续期证书。']
+      : [
+          '# 3) 公网 IP 的 HTTPS 证书（Caddy 不能为 IP 自动签发，故用 certbot 签发）：',
+          ...parts.certGuide.map(line => `#   ${line}`),
+          '#',
+          '# 4) 确认证书续期任务，并在续期后将新证书安装到 Caddy：',
+          'systemctl list-timers certbot.timer --all || true',
+        ]),
     '#',
-    '# 4) 续期：certbot 自带每日续期定时器，确认它处于启用状态即可（无需你另外维护）：',
-    'systemctl list-timers certbot.timer --all || true',
-    '#',
-    '# 5) 端到端验证（公网入口为 443，与 frps 的 vhost 端口无关）：',
+    '# 端到端验证（公网入口为 443，与 frps 的 vhost 端口无关）：',
     `curl -sS -o /dev/null -w '%{http_code}\\n' https://${parts.publicHost}${FRP_ATTACH_DISCOVERY_PATH}`,
     '# 期望输出 200。',
     '',

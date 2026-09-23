@@ -7,7 +7,7 @@ import { isAbsolute } from 'node:path'
 import { Readable } from 'node:stream'
 import type { MobileAccessControlStore } from './control.js'
 import type { FrpConfigStore, FrpSettings } from './frp-config.js'
-import { isFrpSelfSignedIngress, resolveFrpPublicPort, resolveFrpVhostHttpPort } from './frp-config.js'
+import { frpEntryOrigin, isFrpSelfSignedIngress, resolveFrpVhostHttpPort } from './frp-config.js'
 import type { MobileAccessGateway } from './gateway.js'
 import { settleRemoteResources, terminateRemoteProcess, type RemoteProviderController } from './remote.js'
 
@@ -16,6 +16,7 @@ const DISCOVERY_REQUEST_TIMEOUT_MS = 5_000
 const DISCOVERY_RETRY_MS = 1_000
 const MAX_DISCOVERY_BYTES = 16 * 1024
 const VHOST_PROBE_TIMEOUT_MS = 1_500
+const INGRESS_CERT_CHECK_MS = 12 * 60 * 60_000
 
 /** Product-facing states for the restricted self-hosted FRP transport. */
 export type FrpState = 'off' | 'unavailable' | 'starting' | 'connecting' | 'ready' | 'error'
@@ -49,7 +50,7 @@ export interface FrpDiscoveryProbeTarget {
 
 /** Derived self-check target plus the origin the panel is told about. */
 interface FrpDiscoveryCheck {
-  /** Origin reported once the channel is ready; the saved public origin. */
+  /** Origin reported once the channel is ready; the actual HTTPS entry. */
   readonly publicOrigin: string
   /** Absolute origin the probe dials, including the effective entry port. */
   readonly targetOrigin: string
@@ -84,10 +85,14 @@ export interface FrpControllerOptions {
    * Only the composing plugin knows where the ingress material lives, so the
    * trust anchor is injected instead of guessed here. Consulted solely for the
    * self-signed passthrough; the public-CA entry always keeps the system trust
-   * store. An absent or unreadable anchor leaves the default chain in place, so
-   * the probe keeps retrying instead of failing with a new error code.
+   * store. A configured resolver that cannot provide the CA fails startup with
+   * `frp_ingress_ca_invalid`; the system trust store must not mask that failure.
    */
   readonly resolveDiscoveryTrustAnchor?: (settings: FrpSettings) => Promise<string | undefined>
+  /** Re-issue an expiring leaf and reload the live TLS listener without changing its CA. */
+  readonly maintainIngressCertificate?: (settings: FrpSettings, gateway: MobileAccessGateway) => Promise<void>
+  /** Test seam for the maintenance timer; the product uses a twelve-hour interval. */
+  readonly ingressCertificateCheckMs?: number
   readonly startTimeoutMs?: number
   readonly retryIntervalMs?: number
 }
@@ -306,10 +311,16 @@ export class FrpController implements RemoteProviderController {
   private latest: FrpStatus = publicStatus({ enabled: false, state: 'off' })
   private queue: Promise<void> = Promise.resolve()
   private startupAbort: AbortController | undefined
+  private ingressCertificateTimer: NodeJS.Timeout | undefined
 
   constructor(private readonly options: FrpControllerOptions) {
     if (!isAbsolute(options.executable)) throw new Error('frpc executable path must be absolute')
     if (!/^[a-f0-9]{64}$/u.test(options.instanceId)) throw new Error('FRP instance ID is invalid')
+    if (options.ingressCertificateCheckMs !== undefined
+      && (!Number.isSafeInteger(options.ingressCertificateCheckMs)
+        || options.ingressCertificateCheckMs < 1 || options.ingressCertificateCheckMs > 2_147_483_647)) {
+      throw new Error('frp_ingress_check_interval_invalid')
+    }
   }
 
   /** Restore the remembered FRP switch without changing LAN or other providers. */
@@ -405,7 +416,8 @@ export class FrpController implements RemoteProviderController {
       this.publish({ enabled: true, state: 'unavailable', errorCode: 'frp_config_missing' })
       return
     }
-    this.publish({ enabled: true, state: 'starting', origin: settings.publicOrigin })
+    const entryOrigin = frpEntryOrigin(settings)
+    this.publish({ enabled: true, state: 'starting', origin: entryOrigin })
     // The plaintext-vhost gate must probe the port the user's frps actually
     // listens on. Probing the hard-coded upstream 7080 would report "not
     // exposed" for a reachable vhost on any other port and let a cleartext
@@ -423,11 +435,11 @@ export class FrpController implements RemoteProviderController {
           resolveFrpVhostHttpPort(settings),
         )
       } catch {
-        this.publish({ enabled: true, state: 'error', origin: settings.publicOrigin, errorCode: 'frp_vhost_probe_failed' })
+        this.publish({ enabled: true, state: 'error', origin: entryOrigin, errorCode: 'frp_vhost_probe_failed' })
         return
       }
       if (exposed) {
-        this.publish({ enabled: true, state: 'error', origin: settings.publicOrigin, errorCode: 'frp_vhost_publicly_reachable' })
+        this.publish({ enabled: true, state: 'error', origin: entryOrigin, errorCode: 'frp_vhost_publicly_reachable' })
         return
       }
     }
@@ -436,7 +448,7 @@ export class FrpController implements RemoteProviderController {
       // Ingress certificate problems carry their own stable code so the panel can
       // explain how to re-issue it instead of showing a generic start failure.
       const code = error instanceof Error && error.message.startsWith('frp_') ? error.message : 'gateway_start_failed'
-      this.publish({ enabled: true, state: 'error', origin: settings.publicOrigin, errorCode: code })
+      this.publish({ enabled: true, state: 'error', origin: entryOrigin, errorCode: code })
       return
     }
     if (generation !== this.generation || !this.enabled) {
@@ -467,11 +479,17 @@ export class FrpController implements RemoteProviderController {
       this.child = undefined
       if (this.enabled) void this.enqueue(() => this.failGeneration(generation, code === 0 ? 'frp_stopped' : 'frp_exited'))
     })
-    this.publish({ enabled: true, state: 'connecting', origin: settings.publicOrigin })
+    this.publish({ enabled: true, state: 'connecting', origin: entryOrigin })
     // The probe target is derived from the effective entry *before* the abort
     // controller exists, so reading the ingress anchor can never resurrect it
     // after a concurrent stop.
-    const check = await this.discoveryCheck(settings)
+    let check: FrpDiscoveryCheck
+    try { check = await this.discoveryCheck(settings) } catch (error) {
+      const code = error instanceof Error && error.message.startsWith('frp_')
+        ? error.message : 'frp_ingress_ca_invalid'
+      await this.failGeneration(generation, code)
+      return
+    }
     if (generation !== this.generation || !this.enabled) return
     const controller = new AbortController()
     this.startupAbort = controller
@@ -484,7 +502,7 @@ export class FrpController implements RemoteProviderController {
     // both values are equal, so that path is unchanged. `discoveryCheck` supplies
     // the other half of the contract: the port that is actually dialled and, for
     // the self-signed entry, the CA that must anchor the handshake.
-    void this.waitForDiscovery(generation, check, gateway.config.instanceId, controller.signal)
+    void this.waitForDiscovery(generation, check, gateway.config.instanceId, settings, gateway, controller.signal)
   }
 
   /**
@@ -503,14 +521,13 @@ export class FrpController implements RemoteProviderController {
     if (!isFrpSelfSignedIngress(settings)) {
       return { publicOrigin: settings.publicOrigin, targetOrigin: settings.publicOrigin }
     }
-    const { hostname } = new URL(settings.publicOrigin)
-    const targetOrigin = `https://${hostname}:${String(resolveFrpPublicPort(settings))}`
-    let trustAnchorPem: string | undefined
-    // An anchor that cannot be read leaves the default chain in place, so the
-    // probe keeps its old retry behaviour instead of introducing a new failure.
-    try { trustAnchorPem = await this.options.resolveDiscoveryTrustAnchor?.(settings) } catch { trustAnchorPem = undefined }
+    const targetOrigin = frpEntryOrigin(settings)
+    const trustAnchorPem = await this.options.resolveDiscoveryTrustAnchor?.(settings)
+    if (this.options.resolveDiscoveryTrustAnchor !== undefined && trustAnchorPem === undefined) {
+      throw new Error('frp_ingress_ca_invalid')
+    }
     return Object.freeze({
-      publicOrigin: settings.publicOrigin,
+      publicOrigin: targetOrigin,
       targetOrigin,
       ...(trustAnchorPem === undefined ? {} : { trustAnchorPem }),
     })
@@ -520,6 +537,8 @@ export class FrpController implements RemoteProviderController {
     generation: number,
     check: FrpDiscoveryCheck,
     advertisedInstanceId: string,
+    settings: FrpSettings,
+    gateway: MobileAccessGateway,
     signal: AbortSignal,
   ): Promise<void> {
     const deadline = Date.now() + (this.options.startTimeoutMs ?? START_TIMEOUT_MS)
@@ -535,6 +554,7 @@ export class FrpController implements RemoteProviderController {
             if (generation !== this.generation || signal.aborted || !this.enabled) return
             this.startupAbort = undefined
             this.publish({ enabled: true, state: 'ready', origin: check.publicOrigin })
+            this.scheduleIngressCertificateCheck(generation, settings, gateway)
           })
           return
         }
@@ -562,6 +582,35 @@ export class FrpController implements RemoteProviderController {
     if (!signal.aborted) await this.enqueue(() => this.failGeneration(generation, 'frp_start_timeout'))
   }
 
+  private scheduleIngressCertificateCheck(generation: number, settings: FrpSettings, gateway: MobileAccessGateway): void {
+    const maintain = this.options.maintainIngressCertificate
+    if (!isFrpSelfSignedIngress(settings) || maintain === undefined) return
+    const timer = setTimeout(() => {
+      if (this.ingressCertificateTimer !== timer) return
+      this.ingressCertificateTimer = undefined
+      void this.enqueue(async () => {
+        if (generation !== this.generation || !this.enabled || this.disposed || this.gatewayValue !== gateway) return
+        try {
+          await maintain(settings, gateway)
+        } catch (error) {
+          const code = error instanceof Error && error.message.startsWith('frp_')
+            ? error.message : 'frp_ingress_renewal_failed'
+          await this.failGeneration(generation, code)
+          return
+        }
+        if (generation === this.generation && this.enabled && !this.disposed && this.gatewayValue === gateway) {
+          this.scheduleIngressCertificateCheck(generation, settings, gateway)
+        }
+      }).catch(() => {
+        if (generation === this.generation && this.enabled && !this.disposed) {
+          this.publish({ enabled: true, state: 'error', errorCode: 'frp_ingress_renewal_failed' })
+        }
+      })
+    }, this.options.ingressCertificateCheckMs ?? INGRESS_CERT_CHECK_MS)
+    timer.unref()
+    this.ingressCertificateTimer = timer
+  }
+
   private async failGeneration(generation: number, code: string): Promise<void> {
     if (generation !== this.generation) return
     await this.stopProcessAndGateway()
@@ -574,6 +623,8 @@ export class FrpController implements RemoteProviderController {
   }
 
   private async stopProcessAndGateway(): Promise<void> {
+    clearTimeout(this.ingressCertificateTimer)
+    this.ingressCertificateTimer = undefined
     this.startupAbort?.abort()
     this.startupAbort = undefined
     const child = this.child

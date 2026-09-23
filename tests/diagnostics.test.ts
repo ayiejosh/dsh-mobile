@@ -41,10 +41,10 @@ describe('connection diagnostics', () => {
     ]))
   })
 
-  it('allows known remote relays longer than direct endpoints', () => {
-    expect(remoteDiagnosticTimeoutMs('https://private-name.r8.cpolar.cn')).toBe(10_000)
-    expect(remoteDiagnosticTimeoutMs('https://example.tail1234.ts.net')).toBe(10_000)
-    expect(remoteDiagnosticTimeoutMs('https://example.com')).toBe(10_000)
+  it('fits direct and relay attempts inside the desktop diagnostic request budget', () => {
+    expect(remoteDiagnosticTimeoutMs('https://private-name.r8.cpolar.cn')).toBe(6_000)
+    expect(remoteDiagnosticTimeoutMs('https://example.tail1234.ts.net')).toBe(6_000)
+    expect(remoteDiagnosticTimeoutMs('https://example.com')).toBe(6_000)
   })
 
   it('summarizes healthy LAN and remote paths without copying exact addresses', async () => {
@@ -164,6 +164,9 @@ describe('remote reachability relay fallback', () => {
     expect(configuredProxyFor(funnelOrigin, { ...env, NO_PROXY: '.tail1234.ts.net' })).toBeUndefined()
     expect(configuredProxyFor(funnelOrigin, { HTTP_PROXY: 'http://127.0.0.1:7897', NO_PROXY: '*' })).toBeUndefined()
     expect(configuredProxyFor('https://private-name.r8.cpolar.cn', { HTTP_PROXY: 'http://127.0.0.1:7897', NO_PROXY: 'ts.net' })?.host).toBe('127.0.0.1:7897')
+    expect(configuredProxyFor(funnelOrigin, { ...env, NO_PROXY: 'ts.net:80' })?.host).toBe('127.0.0.1:7897')
+    expect(configuredProxyFor(funnelOrigin, { ...env, NO_PROXY: 'ts.net:443' })).toBeUndefined()
+    expect(configuredProxyFor('https://[::1]', { ...env, NO_PROXY: '[::1]:443' })).toBeUndefined()
   })
 
   it('answers ready through the relay when the direct hairpin cannot', async () => {
@@ -181,11 +184,13 @@ describe('remote reachability relay fallback', () => {
     expect(result.checks).toEqual(expect.arrayContaining([
       expect.objectContaining({
         id: 'remote',
-        status: 'ok',
+        status: 'warning',
         reason: 'remote-ready',
         facts: { provider: 'cpolar', endpointSuffix: '*.cpolar.cn', latencyMs: 8, viaProxy: true },
       }),
     ]))
+    expect(result.checks.find(entry => entry.id === 'remote')?.detail).toContain('尚未验证手机能否连接')
+    expect(result.overall).toBe('attention')
   })
 
   it('keeps the direct failure when the relay refuses, times out, or is not configured', async () => {

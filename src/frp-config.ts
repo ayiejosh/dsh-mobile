@@ -157,6 +157,12 @@ export function resolveFrpPublicPort(settings: FrpSettings): number {
   return settings.publicPort ?? FRP_DEFAULT_PUBLIC_PORT
 }
 
+/** HTTPS origin users actually open; the self-signed TCP entry is not on 443. */
+export function frpEntryOrigin(settings: FrpSettings): string {
+  if (!isFrpSelfSignedIngress(settings)) return settings.publicOrigin
+  return `https://${new URL(settings.publicOrigin).hostname}:${String(resolveFrpPublicPort(settings))}`
+}
+
 /** True when the gateway terminates TLS itself behind a raw frps TCP proxy. */
 export function isFrpSelfSignedIngress(settings: FrpSettings): boolean {
   return resolveFrpEntryTls(settings) === 'self-signed'
@@ -189,12 +195,16 @@ export function parseFrpSettings(value: unknown): FrpSettings {
   if (resolvedMode === 'attach' && resolvedEntryTls === 'public-ip-cert' && vhostHttpPort === undefined) {
     throw new Error('frp_attach_mode_requires_vhost_port')
   }
+  const publicOrigin = validateFrpPublicOrigin(record.publicOrigin)
+  if (resolvedEntryTls === 'self-signed' && isIP(new URL(publicOrigin).hostname) !== 4) {
+    throw new Error('frp_self_signed_requires_public_ipv4')
+  }
   return Object.freeze({
     version: 1,
     serverAddress: validateFrpServerAddress(record.serverAddress),
     serverPort: validateFrpServerPort(record.serverPort),
     token: validateFrpToken(record.token),
-    publicOrigin: validateFrpPublicOrigin(record.publicOrigin),
+    publicOrigin,
     ...(mode === undefined ? {} : { mode }),
     ...(entryTls === undefined ? {} : { entryTls }),
     ...(vhostHttpPort === undefined ? {} : { vhostHttpPort }),

@@ -140,7 +140,10 @@ describe('attach mode and entry TLS settings', () => {
     expect(() => parseFrpSettings({ ...input, mode: 'attach' })).toThrow('frp_attach_mode_requires_vhost_port')
     expect(parseFrpSettings({ ...input, mode: 'attach', vhostHttpPort: 8080 }).vhostHttpPort).toBe(8080)
     // The self-signed entry publishes raw TCP, so there is no vhost to declare.
-    expect(parseFrpSettings({ ...input, mode: 'attach', entryTls: 'self-signed' }).entryTls).toBe('self-signed')
+    expect(() => parseFrpSettings({ ...input, mode: 'attach', entryTls: 'self-signed' }))
+      .toThrow('frp_self_signed_requires_public_ipv4')
+    expect(parseFrpSettings({ ...input, publicOrigin: 'https://1.2.3.4', mode: 'attach', entryTls: 'self-signed' }).entryTls)
+      .toBe('self-signed')
     // Deploy mode never installs a TCP passthrough to someone else's gateway.
     expect(() => parseFrpSettings({ ...input, entryTls: 'self-signed' })).toThrow('frp_entry_tls_invalid')
     expect(() => parseFrpSettings({ ...input, mode: 'deploy', entryTls: 'self-signed' })).toThrow('frp_entry_tls_invalid')
@@ -161,7 +164,7 @@ describe('attach mode and entry TLS settings', () => {
   })
 
   it('emits a raw TCP proxy for the self-signed entry only', () => {
-    const tcp = createFrpcToml(parseFrpSettings({ ...input, mode: 'attach', entryTls: 'self-signed', publicPort: 33_080 }), 41234)
+    const tcp = createFrpcToml(parseFrpSettings({ ...input, publicOrigin: 'https://1.2.3.4', mode: 'attach', entryTls: 'self-signed', publicPort: 33_080 }), 41234)
     expect(tcp).toContain('type = "tcp"')
     expect(tcp).toContain('remotePort = 33080')
     expect(tcp).toContain('localIP = "127.0.0.1"')
@@ -184,7 +187,7 @@ describe('attach mode and entry TLS settings', () => {
     expect(store.status()).not.toHaveProperty('publicPort')
     await store.configure({ ...input, mode: 'attach', vhostHttpPort: 8080 })
     expect(store.status()).toMatchObject({ mode: 'attach', vhostHttpPort: 8080 })
-    await store.configure({ ...input, mode: 'attach', entryTls: 'self-signed', publicPort: 34_443 })
+    await store.configure({ ...input, publicOrigin: 'https://1.2.3.4', mode: 'attach', entryTls: 'self-signed', publicPort: 34_443 })
     expect(store.status()).toMatchObject({ mode: 'attach', entryTls: 'self-signed', publicPort: 34_443 })
     expect(JSON.stringify(store.status())).not.toContain(input.token)
     await store.purge()

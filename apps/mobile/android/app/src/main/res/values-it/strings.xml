@@ -47,7 +47,7 @@
         <item quantity="other">Trovate %d installazioni DSH. Selezionane una per abbinarla.</item>
     </plurals>
     <string name="pairing_key_label">Chiave di abbinamento</string>
-    <string name="pairing_key_hint">Incolla il codice di 43 caratteri, la chiave app dsh1 o il link di abbinamento di DSH</string>
+    <string name="pairing_key_hint">Incolla una chiave di abbinamento dell’app o un link di abbinamento di DSH</string>
     <string name="invalid_pairing_key">Informazioni di abbinamento non valide\nLa chiave o il link non sono validi oppure appartengono a un altro computer. Generali di nuovo sul computer e incollali per intero.</string>
     <string name="pairing_in_progress">Abbinamento del telefono…</string>
     <string name="pairing_failed">Abbinamento non riuscito\nIl codice QR potrebbe essere scaduto o già usato, oppure il computer potrebbe non essere raggiungibile. Controlla la connessione, genera un nuovo QR e riprova subito.</string>

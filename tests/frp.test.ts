@@ -170,7 +170,7 @@ describe('FRP provider lifecycle', () => {
       serverAddress: 'frp.example.com',
       serverPort: 7000,
       token: '0123456789abcdef0123456789abcdef',
-      publicOrigin: 'https://dsh.example.com',
+      publicOrigin: 'https://1.2.3.4',
       mode: 'attach',
       entryTls: 'self-signed',
       publicPort: 33_080,
@@ -196,7 +196,7 @@ describe('FRP provider lifecycle', () => {
     // the injected probe would otherwise have failed the start.
     expect(probeVhostExposure).not.toHaveBeenCalled()
     await vi.waitFor(() => { expect(controller.status().state).toBe('ready') })
-    expect(createGateway).toHaveBeenCalledWith('https://dsh.example.com', expect.objectContaining({
+    expect(createGateway).toHaveBeenCalledWith('https://1.2.3.4', expect.objectContaining({
       mode: 'attach', entryTls: 'self-signed',
     }))
     const written = await readFile(config.runtimeConfigFile, 'utf8')
@@ -213,7 +213,7 @@ describe('FRP provider lifecycle', () => {
       serverAddress: 'frp.example.com',
       serverPort: 7000,
       token: '0123456789abcdef0123456789abcdef',
-      publicOrigin: 'https://dsh.example.com',
+      publicOrigin: 'https://1.2.3.4',
       mode: 'attach',
       entryTls: 'self-signed',
     })
@@ -230,7 +230,7 @@ describe('FRP provider lifecycle', () => {
     expect(controller.status()).toEqual({
       enabled: true,
       state: 'error',
-      origin: 'https://dsh.example.com',
+      origin: 'https://1.2.3.4:33080',
       errorCode: 'frp_attach_cert_unknown',
     })
     await controller.close()

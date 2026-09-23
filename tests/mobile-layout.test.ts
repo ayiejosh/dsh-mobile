@@ -168,12 +168,18 @@ function bootstrapPage(html: string, existingTransport?: TransportHooks) {
     navigator: typeof navigator
     addEventListener: typeof events.addEventListener
     removeEventListener: typeof events.removeEventListener
+    dispatchEvent: (event: Event) => boolean
+    setTimeout: typeof setTimeout
+    clearTimeout: typeof clearTimeout
   } = {
     fetch: nativeFetch,
     dshMobileNative: nativeBridge,
     navigator,
     addEventListener: events.addEventListener,
     removeEventListener: events.removeEventListener,
+    dispatchEvent: (event: Event) => { events.dispatch(event.type); return true },
+    setTimeout,
+    clearTimeout,
   }
   if (existingTransport !== undefined) page.__DSH_TRANSPORT__ = existingTransport
   const script = /<script>([\s\S]*?)<\/script>/u.exec(html)?.[1]
@@ -190,7 +196,7 @@ function bootstrapPage(html: string, existingTransport?: TransportHooks) {
         globalThis: page,
         document: { cookie: `${CSRF_COOKIE}=paired-csrf-token` },
         location: new URL('https://phone.example/'),
-        Headers, Request, URL,
+        AbortController, Event, Headers, Request, URL,
       })
     },
   }
@@ -354,15 +360,21 @@ describe('dedicated mobile layout boot', () => {
     expect(bootstrap.page.__DSH_MOBILE_FRONTEND__).toBeUndefined()
   })
 
-  it('pins navigator.onLine so a LAN-only tablet is never reported offline', () => {
+  it('keeps the gateway reachable when the OS only loses public internet', async () => {
     const bootstrap = bootstrapPage(rewriteMobileIndex(currentIndex(remoteSettingsEntries())))
-    // Simulate the real failure: the OS reports no public internet while the
-    // gateway is reachable over the LAN.
-    bootstrap.navigator.onLine = false
-    bootstrap.run()
-    expect(bootstrap.page.navigator.onLine).toBe(true)
-    // The pin is a getter, so a later platform write cannot flip it back.
-    expect(bootstrap.page.navigator.onLine).toBe(true)
+    try {
+      bootstrap.navigator.onLine = false
+      bootstrap.run()
+      const suspended = vi.fn()
+      bootstrap.page.addEventListener('offline', suspended)
+      bootstrap.events.dispatch('offline')
+      await vi.waitFor(() => { expect(bootstrap.nativeFetch).toHaveBeenCalledOnce() })
+      expect(bootstrap.nativeFetch.mock.calls[0]?.[0]).toBe('/mobile-access/health')
+      expect(bootstrap.page.navigator.onLine).toBe(true)
+      expect(suspended).not.toHaveBeenCalled()
+    } finally {
+      bootstrap.events.dispatch('pagehide')
+    }
   })
 
   it('stops the offline event before DSH connection recovery can suspend retries', () => {
@@ -380,6 +392,54 @@ describe('dedicated mobile layout boot', () => {
     bootstrap.page.addEventListener('online', resumed)
     bootstrap.events.dispatch('online')
     expect(resumed).toHaveBeenCalledOnce()
+    bootstrap.events.dispatch('pagehide')
+  })
+
+  it('replays true gateway loss and recovery to the Connection and other listeners', async () => {
+    const bootstrap = bootstrapPage(rewriteMobileIndex(currentIndex(remoteSettingsEntries())))
+    bootstrap.nativeFetch.mockResolvedValueOnce(new Response('{}', { status: 503 }))
+    bootstrap.nativeFetch.mockResolvedValueOnce(new Response('{}', { status: 200 }))
+    try {
+      bootstrap.run()
+      const suspended = vi.fn()
+      const resumed = vi.fn()
+      bootstrap.page.addEventListener('offline', suspended)
+      bootstrap.page.addEventListener('online', resumed)
+      bootstrap.events.dispatch('offline')
+      await vi.waitFor(() => { expect(suspended).toHaveBeenCalledOnce() })
+      expect(bootstrap.page.navigator.onLine).toBe(false)
+      await Promise.resolve()
+      bootstrap.events.dispatch('offline')
+      await vi.waitFor(() => { expect(resumed).toHaveBeenCalledOnce() })
+      expect(bootstrap.page.navigator.onLine).toBe(true)
+    } finally {
+      bootstrap.events.dispatch('pagehide')
+    }
+  })
+
+  it('rechecks a lost gateway and resumes even without an OS online event', async () => {
+    vi.useFakeTimers()
+    const bootstrap = bootstrapPage(rewriteMobileIndex(currentIndex(remoteSettingsEntries())))
+    bootstrap.nativeFetch.mockResolvedValueOnce(new Response('{}', { status: 503 }))
+    bootstrap.nativeFetch.mockResolvedValueOnce(new Response('{}', { status: 200 }))
+    try {
+      bootstrap.run()
+      const suspended = vi.fn()
+      const resumed = vi.fn()
+      bootstrap.page.addEventListener('offline', suspended)
+      bootstrap.page.addEventListener('online', resumed)
+      bootstrap.events.dispatch('offline')
+      await vi.advanceTimersByTimeAsync(0)
+      expect(suspended).toHaveBeenCalledOnce()
+      expect(bootstrap.page.navigator.onLine).toBe(false)
+      await vi.advanceTimersByTimeAsync(5_000)
+      expect(resumed).toHaveBeenCalledOnce()
+      expect(bootstrap.page.navigator.onLine).toBe(true)
+      expect(bootstrap.nativeFetch).toHaveBeenCalledTimes(2)
+    } finally {
+      bootstrap.events.dispatch('pagehide')
+      vi.useRealTimers()
+    }
   })
 
   it('keeps ordinary page listeners and event-target bookkeeping working', () => {

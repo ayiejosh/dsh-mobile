@@ -74,12 +74,17 @@ class GatewayUrlPolicyContractTest {
             PairingKey(instanceId, token),
             GatewayUrlPolicy.pairingKey("https://192.168.1.20:3443/mobile-access/pair#instance=$instanceId&token=$token"),
         )
+        assertEquals(
+            PairingKey(instanceId, token, requiresCa = true),
+            GatewayUrlPolicy.pairingKey("https://1.2.3.4:33080/mobile-access/pair#key=dsh2.$instanceId.$token"),
+        )
 
         // A bare pairing key is not a link.
         assertNull(GatewayUrlPolicy.pairingKey("dsh1.$instanceId.${"B".repeat(43)}"))
 
         // Legacy token-only links do not authenticate the certificate fingerprint.
         assertNull(GatewayUrlPolicy.pairingKey("https://192.168.1.20:3443/mobile-access/pair#token=$token"))
+        assertNull(GatewayUrlPolicy.pairingKey("https://1.2.3.4:33080/mobile-access/pair#key=dsh1.$instanceId.$token"))
 
         // The fixed pairing page without a fragment carries no key.
         assertNull(GatewayUrlPolicy.pairingKey("https://192.168.1.20:3443/mobile-access/pair"))

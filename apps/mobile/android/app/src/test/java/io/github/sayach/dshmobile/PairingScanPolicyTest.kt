@@ -54,6 +54,16 @@ class PairingScanPolicyTest {
     }
 
     @Test
+    fun selectsTheCaRequiredSelfSignedLinkFromTheRemoteFlow() {
+        val link = "https://1.2.3.4:33080/mobile-access/pair#key=dsh2.$instanceId.$token"
+        val target = PairingScanPolicy.parse(link, AccessMode.REMOTE)
+
+        assertEquals(AccessMode.REMOTE, target?.mode)
+        assertEquals(PairingKey(instanceId, token, requiresCa = true), GatewayUrlPolicy.pairingKey(target!!.connection.initialUrl))
+        assertNull(PairingScanPolicy.parse(link, AccessMode.LAN))
+    }
+
+    @Test
     fun rejectsDocumentationIpv4FromTheRemoteFlow() {
         // TEST-NET addresses are not globally routable and can never be a VPS endpoint.
         // (The LAN flow still treats unknown literals as ordinary non-remote hosts.)

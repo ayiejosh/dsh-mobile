@@ -129,10 +129,18 @@ internal object NativeAuthClient {
         expectedInstanceId,
     ) { input -> parseNativeProbeResponse(input, origin, expectedInstanceId) }
 
-    /** Fetches the public CA without credentials; the caller must fingerprint-bind it before use. */
-    fun fetchPairingCa(origin: GatewayOrigin): ByteArray = requireNotNull(
-        bootstrapGet(origin, "/mobile-access/ca.cer", 16 * 1024),
-    )
+    /** Only an explicit 404 yields an absent CA; the pairing key decides whether that is allowed. */
+    fun fetchPairingCa(origin: GatewayOrigin): ByteArray? = try {
+        bootstrapGet(origin, "/mobile-access/ca.cer", 16 * 1024, allowMissing = true)
+    } catch (failure: NativeAuthFailure) {
+        throw failure
+    } catch (failure: SocketTimeoutException) {
+        throw NativeAuthFailure(NativeAuthFailureKind.TIMEOUT, failure)
+    } catch (failure: SSLException) {
+        throw NativeAuthFailure(NativeAuthFailureKind.TLS, failure)
+    } catch (failure: IOException) {
+        throw NativeAuthFailure(NativeAuthFailureKind.NETWORK, failure)
+    }
 
     /** Compatibility discovery probe. Its metadata remains untrusted until pairing-key verification. */
     fun fetchDiscovery(origin: GatewayOrigin): JSONObject = JSONObject(
@@ -166,12 +174,15 @@ internal object NativeAuthClient {
             connection.connectTimeout = timeouts.bootstrapConnectMs
             connection.readTimeout = timeouts.bootstrapReadMs
             connection.instanceFollowRedirects = false
-            if (allowMissing && connection.responseCode == HttpURLConnection.HTTP_NOT_FOUND) return null
-            if (connection.responseCode != HttpURLConnection.HTTP_OK) error("Bootstrap request failed (${connection.responseCode})")
+            val responseCode = connection.responseCode
+            if (allowMissing && responseCode == HttpURLConnection.HTTP_NOT_FOUND) return null
+            if (responseCode != HttpURLConnection.HTTP_OK) {
+                throw NativeAuthFailure(nativeAuthFailureForStatus(responseCode))
+            }
             val length = connection.contentLengthLong
-            if (length > maxBytes) error("Bootstrap response is too large")
+            if (length > maxBytes) throw NativeAuthFailure(NativeAuthFailureKind.INVALID_RESPONSE)
             val body = connection.inputStream.use { readAtMost(it, maxBytes + 1) }
-            if (body.size > maxBytes) error("Bootstrap response is too large")
+            if (body.size > maxBytes) throw NativeAuthFailure(NativeAuthFailureKind.INVALID_RESPONSE)
             return body
         } finally {
             connection.disconnect()

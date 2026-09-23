@@ -46,7 +46,7 @@
         <item quantity="other">%d DSH installations found. Select one to pair.</item>
     </plurals>
     <string name="pairing_key_label">Pairing key</string>
-    <string name="pairing_key_hint">Paste the 43-character pairing code, dsh1 app key, or pairing link from DSH</string>
+    <string name="pairing_key_hint">Paste an App pairing key or pairing link from DSH</string>
     <string name="invalid_pairing_key">Invalid pairing information\nThe key or link is malformed or belongs to another computer. Generate it again on the computer and paste it in full.</string>
     <string name="pairing_in_progress">Pairing this phone…</string>
     <string name="pairing_failed">Pairing failed\nThe QR code may be expired or already used, or the computer may be unreachable. Check the connection, generate a new QR code, and try it immediately.</string>

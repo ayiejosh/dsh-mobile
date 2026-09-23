@@ -4,7 +4,16 @@ GitHub 的 [Contributors 图表](https://github.com/saya-ch/dsh-mobile/graphs/co
 
 GitHub's Contributors graph counts commits on the default branch; issue reports and PR proposals cannot be manually added to it. This page credits community members by how they contributed, through 2026-09-23. The repository maintainer and automated dependency updates remain visible in GitHub's history.
 
-## 已合并 PR / Merged pull requests
+## 待发布的代码贡献 / Unreleased code contributions
+
+本次待发布变更保留以下 PR 原作者的代码提交；GitHub 的贡献者图表以进入默认分支的提交历史为准。这些改动不属于已发布的 0.4.5。 / This unreleased change retains the original authors' PR commits. GitHub's Contributors graph follows commit history on the default branch; none of this work is part of the published 0.4.5 release.
+
+| 社区成员 / Community member | 代码贡献 / Code contribution |
+| --- | --- |
+| [@abworks-dev](https://github.com/abworks-dev) | [#99](https://github.com/saya-ch/dsh-mobile/pull/99): 远程连接诊断的代理补充探测 / proxy-assisted remote diagnostics |
+| [@liudasheng](https://github.com/liudasheng) | [#100](https://github.com/saya-ch/dsh-mobile/pull/100): 接入既有 frps 与入口证书方案 / existing-frps attachment and entry TLS modes |
+
+## 已发布版本中的合并 PR / Merged PRs in released versions
 
 | 社区成员 / Community member | 已合并 PR / Merged PRs |
 | --- | --- |

@@ -2,7 +2,7 @@ import { Context } from '@deepseek-ai/cordis'
 import type { WebRoute, WebServer } from '@deepseek-ai/dsh-host-webserver'
 import type { CommandDefinition } from '@deepseek-ai/dsh-commands'
 import { createServer, request as requestHttp } from 'node:http'
-import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises'
+import { lstat, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises'
 import type { AddressInfo } from 'node:net'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
@@ -12,6 +12,8 @@ import { Config, parseGatewayConfig, type PluginConfig } from '../src/config.js'
 import { parseCidr, RequestTrustPolicy } from '../src/network.js'
 import { apply, inject, originGatewayConfig, remoteGatewayConfig, settleCleanupSteps, upstreamAuthenticatedUrl } from '../src/plugin.js'
 import { parseOriginSettings } from '../src/origin-proxy-config.js'
+import { parseFrpSettings } from '../src/frp-config.js'
+import { ensureFrpIngressCertificate } from '../src/frp-ingress.js'
 import { DSH_MOBILE_VERSION, MINIMUM_ANDROID_APP_VERSION } from '../src/version.js'
 
 const contexts: Context[] = []
@@ -73,7 +75,7 @@ async function mount(
   initiallyEnabled = false,
   webServerPort = 3080,
   config: Partial<PluginConfig> = {},
-): Promise<{ context: Context; route: WebRoute; command: CommandDefinition; upstreamBase: string | undefined }> {
+): Promise<{ context: Context; route: WebRoute; command: CommandDefinition; upstreamBase: string | undefined; directory: string }> {
   const directory = await mkdtemp(join(tmpdir(), 'dsh-mobile-plugin-'))
   temporaryDirectories.push(directory)
   let route: WebRoute | undefined
@@ -112,7 +114,7 @@ async function mount(
   })
   if (route === undefined) throw new Error('plugin did not register its control route')
   if (command === undefined) throw new Error('plugin did not register its /mobile command')
-  return { context, route, command, upstreamBase }
+  return { context, route, command, upstreamBase, directory }
 }
 
 async function unusedOriginPort(): Promise<number> {
@@ -481,8 +483,10 @@ describe('stock DSH lifecycle', () => {
       backendOrigin: 'http://127.0.0.1:' + String(port) })
     const pairing = await invoke(mounted.route, 'POST', '/api/mobile-access/remote/pairing/open', '{}')
     expect(pairing.status).toBe(201)
-    const opened = JSON.parse(pairing.body) as { token: string; pairUrl: string; appPairUrl: string }
+    const opened = JSON.parse(pairing.body) as { token: string; appKey: string; pairUrl: string; appPairUrl: string }
     expect(opened.pairUrl).toMatch(/^https:\/\/phone\.example\.com:8815\/mobile-access\/pair#/u)
+    expect(opened.appKey).toMatch(/^dsh1\.[a-f0-9]{64}\.[A-Za-z0-9_-]{43}$/u)
+    expect(opened.pairUrl).toContain('#instance=')
     expect(opened.appPairUrl).toBe(opened.pairUrl)
     expect(await pairOriginBackend(port, opened.token)).toBe(201)
     const devices = JSON.parse((await invoke(mounted.route, 'GET', '/api/mobile-access/remote/devices')).body).devices
@@ -694,6 +698,24 @@ describe('attach-mode control routes', () => {
     expect(check.body).not.toContain('ca-key.pem')
   })
 
+  it('purges the FRP-owned CA key, leaf key, and identity marker through the control route', async () => {
+    const mounted = await mount()
+    const settings = parseFrpSettings({
+      serverAddress: '1.2.3.4', serverPort: 7000,
+      token: '0123456789abcdef0123456789abcdef',
+      publicOrigin: 'https://1.2.3.4', mode: 'attach', entryTls: 'self-signed',
+    })
+    const stateFile = join(mounted.directory, 'remote', 'devices.json')
+    const ingress = await ensureFrpIngressCertificate(settings, stateFile)
+    const configured = await invoke(mounted.route, 'POST', '/api/mobile-access/remote/frp/configure', JSON.stringify(settings))
+    expect(configured.status).toBe(200)
+    const purged = await invoke(mounted.route, 'POST', '/api/mobile-access/remote/frp/component/purge', '{"confirm":true}')
+    expect(purged.status).toBe(200)
+    for (const file of [ingress.paths.caCertFile, ingress.paths.caKeyFile, ingress.paths.certFile, ingress.paths.keyFile, ingress.paths.statusFile]) {
+      await expect(lstat(file)).rejects.toMatchObject({ code: 'ENOENT' })
+    }
+  })
+
   it('keeps the managed deploy routes untouched for the default mode', async () => {
     const mounted = await mount()
     const configured = await invoke(mounted.route, 'POST', '/api/mobile-access/remote/frp/configure', JSON.stringify({
@@ -714,7 +736,7 @@ describe('attach-mode control routes', () => {
     expect(parsed.providers.frp.configuration).not.toHaveProperty('publicPort')
   })
 
-  it('masks the token in the attach preview and reveals it only on an explicit request', async () => {
+  it('never returns a saved FRP token from the attach preview, even on a reveal request', async () => {
     const mounted = await mount()
     const token = '0123456789abcdef0123456789abcdef'
     const request = {
@@ -737,16 +759,22 @@ describe('attach-mode control routes', () => {
     expect(maskedParsed.frpAttachPlan.local.tokenMasked).toBe(true)
     expect(maskedParsed.frpAttachTemplate).not.toContain(token)
     expect(masked.body).not.toContain(token)
-    // The panel's dedicated reveal action is the only caller that gets the plaintext.
-    const revealed = await invoke(mounted.route, 'POST', '/api/mobile-access/remote/frp/attach-plan',
-      JSON.stringify({ ...request, revealToken: true }))
-    expect(revealed.status).toBe(200)
-    const revealedParsed = JSON.parse(revealed.body) as {
+    const configured = await invoke(mounted.route, 'POST', '/api/mobile-access/remote/frp/configure', JSON.stringify(request))
+    expect(configured.status).toBe(200)
+    // A same-origin script can send this body without a user gesture. The
+    // saved token must remain unreadable even when the request asks to reveal it.
+    const requestedReveal = await invoke(mounted.route, 'POST', '/api/mobile-access/remote/frp/attach-plan',
+      JSON.stringify({ ...request, token: '', revealToken: true }))
+    expect(requestedReveal.status).toBe(200)
+    const revealedParsed = JSON.parse(requestedReveal.body) as {
       frpAttachPlan: { local: { frpcToml: string; tokenMasked: boolean } }
+      frpAttachTemplate: string
     }
-    expect(revealedParsed.frpAttachPlan.local.frpcToml).toContain(`auth.token = "${token}"`)
-    expect(revealedParsed.frpAttachPlan.local.tokenMasked).toBe(false)
-    // Neither preview persists anything: the control snapshot never carries the token.
+    expect(revealedParsed.frpAttachPlan.local.frpcToml).toContain('auth.token = "***"')
+    expect(revealedParsed.frpAttachPlan.local.tokenMasked).toBe(true)
+    expect(revealedParsed.frpAttachTemplate).not.toContain(token)
+    expect(requestedReveal.body).not.toContain(token)
+    // The control snapshot also keeps the saved token private.
     const status = await invoke(mounted.route, 'GET', '/api/mobile-access/remote/control')
     expect(status.body).not.toContain(token)
   })

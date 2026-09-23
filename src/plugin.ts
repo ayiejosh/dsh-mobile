@@ -65,8 +65,8 @@ import {
 } from './frp-config.js'
 import { createFrpAttachTemplate } from './frp-attach.js'
 import { createFrpAttachPlan } from './frp-attach-plan.js'
-import { FrpController } from './frp.js'
-import { ensureFrpIngressCertificate, frpIngressPaths, frpIngressSelfCheck, type FrpIngressCertificate } from './frp-ingress.js'
+import { defaultProbeDiscovery, FrpController } from './frp.js'
+import { ensureFrpIngressCertificate, frpIngressPaths, frpIngressSelfCheck, purgeFrpIngressCertificates, type FrpIngressCertificate } from './frp-ingress.js'
 import { OriginConfigStore, parseOriginSettings, validateOriginListenPort, type OriginConfigurationStatus, type OriginSettings } from './origin-proxy-config.js'
 import { OriginController } from './origin-proxy.js'
 import { PluginReleaseManager, releaseProfileDirectory } from './release-update.js'
@@ -374,13 +374,14 @@ export function frpIngressGatewayConfig(
  * the system trust store, so the probe must anchor it exactly as the app does
  * when it pins `pairingCaFile`. The public-CA entry answers with a publicly
  * trusted certificate and therefore returns `undefined` (system trust store).
- * An unreadable CA is also `undefined` on purpose: the probe then keeps its
- * default chain and its existing retry/timeout behaviour instead of failing with
- * a new error code.
+ * An unreadable self-signed CA fails explicitly: falling back to the system
+ * trust store would hide a broken pairing identity behind a start timeout.
  */
 export async function readFrpIngressTrustAnchor(settings: FrpSettings, stateFile: string): Promise<string | undefined> {
   if (!isFrpSelfSignedIngress(settings)) return undefined
-  try { return await readFile(frpIngressPaths(stateFile).caCertFile, 'utf8') } catch { return undefined }
+  try { return await readFile(frpIngressPaths(stateFile).caCertFile, 'utf8') } catch (error) {
+    throw new Error('frp_ingress_ca_invalid', { cause: error })
+  }
 }
 
 /** Reuse remote HTTPS policy while binding a separately validated private HTTP origin. */
@@ -700,6 +701,10 @@ export async function apply(ctx: Context, config: PluginConfig): Promise<void> {
        * read here from the ingress directory instead of being guessed downstream.
        */
       resolveDiscoveryTrustAnchor: settings => readFrpIngressTrustAnchor(settings, remoteDeviceFile),
+      maintainIngressCertificate: async (settings, gateway) => {
+        await ensureFrpIngressCertificate(settings, remoteDeviceFile, Date.now(), gateway.config.instanceId)
+        await gateway.refreshProvidedTls()
+      },
     }),
     origin: new OriginController({ store: originStore, config: originConfig, createGateway: createOriginGateway }),
   }
@@ -765,6 +770,29 @@ export async function apply(ctx: Context, config: PluginConfig): Promise<void> {
       catch { networkError = 'network_interface_unavailable' }
     }
     const remote = remoteController().status()
+    const frpOrigin = remote.origin
+    const frpSettings = remoteProviders.selected === 'frp' ? frpConfig.settings() : undefined
+    const frpGateway = remoteControllers.frp.gateway()
+    const pinnedFrpProbe = frpSettings !== undefined && isFrpSelfSignedIngress(frpSettings)
+      && frpGateway !== undefined && frpOrigin !== undefined
+      ? async (): Promise<{ state: 'ready' | 'unreachable'; latencyMs?: number }> => {
+          try {
+            const trustAnchorPem = await readFrpIngressTrustAnchor(frpSettings, remoteDeviceFile)
+            if (trustAnchorPem === undefined) return { state: 'unreachable' }
+            const started = performance.now()
+            const reachable = await defaultProbeDiscovery(
+              { origin: frpOrigin, trustAnchorPem },
+              frpGateway.config.instanceId,
+              AbortSignal.timeout(5_500),
+            )
+            return reachable
+              ? { state: 'ready', latencyMs: Math.max(0, Math.round(performance.now() - started)) }
+              : { state: 'unreachable' }
+          } catch {
+            return { state: 'unreachable' }
+          }
+        }
+      : undefined
     return collectConnectionDiagnostics({
       dshVersion,
       lan: {
@@ -782,7 +810,7 @@ export async function apply(ctx: Context, config: PluginConfig): Promise<void> {
         ...(remote.origin === undefined ? {} : { origin: remote.origin }),
         ...(remote.errorCode === undefined ? {} : { errorCode: remote.errorCode }),
       },
-    }) as unknown as Record<string, unknown>
+    }, pinnedFrpProbe === undefined ? {} : { remote: pinnedFrpProbe }) as unknown as Record<string, unknown>
   }
 
   const adminRoute: WebRoute = {
@@ -981,10 +1009,9 @@ export async function apply(ctx: Context, config: PluginConfig): Promise<void> {
           // Read-only preview: blank fields keep their saved values, and nothing
           // on the VPS or the local filesystem is touched.
           const settings = mergeSavedFrpSettings(body, frpConfig.settings())
-          // Previews are masked by default. Only the panel's explicit "copy the
-          // frpc.toml with its token" action sets revealToken, and the revealed
-          // text is copied by the caller instead of being stored anywhere.
-          const options = { configFile: frpConfig.runtimeConfigFile, revealToken: body.revealToken === true }
+          // This route is callable by any same-origin client script. Never return
+          // the saved token, even if a caller asks for an unmasked preview.
+          const options = { configFile: frpConfig.runtimeConfigFile }
           logger.info('frp attach plan requested mode=%s entryTls=%s vhostHttpPort=%d',
             settings.mode ?? 'deploy', settings.entryTls ?? 'public-ip-cert', resolveFrpVhostHttpPort(settings))
           sendJson(response, 200, {
@@ -1114,7 +1141,7 @@ export async function apply(ctx: Context, config: PluginConfig): Promise<void> {
           if (body.confirm !== true) throw new HttpError(400, 'bad_request')
           await remoteProviders.mutate(async () => {
             await remoteControllers.frp.setEnabled(false)
-            await Promise.all([frpComponent.purge(), frpConfig.purge()])
+            await Promise.all([frpComponent.purge(), frpConfig.purge(), purgeFrpIngressCertificates(remoteDeviceFile)])
           })
           sendJson(response, 200, remotePayload(), false)
           return

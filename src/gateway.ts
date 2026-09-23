@@ -179,26 +179,57 @@ const MOBILE_LAYOUT_DEPENDENCY_PROFILES = Object.freeze([
 const MOBILE_CSRF_FETCH_BOOTSTRAP = `(()=>{const nativeFetch=window.fetch.bind(window);window.fetch=(input,init)=>{const source=input instanceof Request?input:undefined;const method=String(init?.method??source?.method??'GET').toUpperCase();if(method==='GET'||method==='HEAD')return nativeFetch(input,init);const raw=typeof input==='string'?input:input instanceof URL?input.href:source?.url;if(raw===undefined||new URL(raw,location.href).origin!==location.origin)return nativeFetch(input,init);const headers=new Headers(init?.headers??source?.headers);if(!headers.has(${JSON.stringify(CSRF_HEADER)})){const prefix=${JSON.stringify(`${CSRF_COOKIE}=`)};const token=document.cookie.split(';').map(value=>value.trim()).find(value=>value.startsWith(prefix))?.slice(prefix.length);if(token!==undefined)headers.set(${JSON.stringify(CSRF_HEADER)},token)}return nativeFetch(input,{...init,headers})};})();`
 // Paired pages use the gateway's authenticated HTTP carrier; streams retain DSH's WebSocket transport.
 const MOBILE_AUTHENTICATED_TRANSPORT_BOOTSTRAP = `(()=>{if(window.__DSH_TRANSPORT__!==undefined)throw new Error('DSH Mobile cannot replace an existing transport override');window.__DSH_TRANSPORT__={fetch:(input,init)=>window.fetch(input,init),ownsHost:true}})();`
-/**
- * Decouple the served page's reachability from the browser's internet signal.
- *
- * `navigator.onLine` reports whether the OS believes the *default* network
- * reaches the public internet, which is not the same question as "can this page
- * reach its gateway". A tablet on a LAN whose router has no upstream, entering
- * or leaving doze, or re-validating Wi-Fi reports `offline` while every request
- * to the gateway still succeeds. DSH's connection layer consumes that signal
- * directly and, on `offline`, publishes `disconnected` *and suspends automatic
- * retries* — so a false reading tears down a healthy connection and leaves the
- * page waiting for an `online` event that may never come.
- *
- * Pinning availability to `true` removes only that false negative; a genuinely
- * dropped carrier still loses its WebSocket, and the connection layer recovers
- * it through the normal backoff (`connecting`). The capture-phase blocker is
- * registered while this boot script is parsed, so it precedes every listener
- * the client plugins add later and wins the registration-order race that
- * governs the window-targeted `offline` event.
- */
-const MOBILE_GATEWAY_REACHABILITY_BOOTSTRAP = `(()=>{const view=globalThis;const port=view.navigator;if(port!==undefined&&typeof Object.defineProperty==='function'){try{Object.defineProperty(port,'onLine',{configurable:true,get:()=>true})}catch{/* A frozen navigator keeps its own answer; the capture blocker below still applies. */}}if(typeof view.addEventListener==='function'){view.addEventListener('offline',event=>{event.stopImmediatePropagation()},true)}})();`
+/** Use this page's gateway health, rather than OS internet validation, for DSH reconnects. */
+const MOBILE_GATEWAY_REACHABILITY_BOOTSTRAP = `(()=>{
+  const view=globalThis;
+  const port=view.navigator;
+  const nativeFetch=typeof view.fetch==='function'?view.fetch.bind(view):undefined;
+  let reachable=true;
+  let checking=false;
+  let replaying=false;
+  let disposed=false;
+  let epoch=0;
+  let retryTimer;
+  let activeController;
+  const clearRetry=()=>{if(retryTimer!==undefined){view.clearTimeout(retryTimer);retryTimer=undefined}};
+  const scheduleRetry=()=>{if(!disposed&&!reachable&&retryTimer===undefined){retryTimer=view.setTimeout(()=>{retryTimer=undefined;check()},5000)}};
+  const check=()=>{
+    if(checking||disposed||nativeFetch===undefined)return;
+    checking=true;
+    const current=++epoch;
+    const controller=new AbortController();
+    activeController=controller;
+    const timer=view.setTimeout(()=>controller.abort(),2000);
+    void nativeFetch('/mobile-access/health',{cache:'no-store',credentials:'same-origin',signal:controller.signal})
+      .then(response=>response.ok,()=>false)
+      .then(ok=>{
+        if(disposed||current!==epoch)return;
+        if(ok){
+          const wasOffline=!reachable;
+          reachable=true;
+          clearRetry();
+          if(wasOffline)view.dispatchEvent(new Event('online'));
+          return;
+        }
+        const wasOnline=reachable;
+        reachable=false;
+        if(wasOnline){
+          replaying=true;
+          try{view.dispatchEvent(new Event('offline'))}finally{replaying=false}
+        }
+        scheduleRetry();
+      })
+      .finally(()=>{view.clearTimeout(timer);activeController=undefined;checking=false});
+  };
+  if(port!==undefined&&typeof Object.defineProperty==='function'){
+    try{Object.defineProperty(port,'onLine',{configurable:true,get:()=>reachable})}catch{/* A frozen navigator retains its native value. */}
+  }
+  if(typeof view.addEventListener==='function'){
+    view.addEventListener('offline',event=>{if(replaying||nativeFetch===undefined)return;event.stopImmediatePropagation();check()},true);
+    view.addEventListener('online',()=>{++epoch;reachable=true;clearRetry()},true);
+    view.addEventListener('pagehide',()=>{disposed=true;++epoch;clearRetry();activeController?.abort()},true);
+  }
+})();`
 const PAIR_PAGE = `<!doctype html>
 <html lang="en">
 <meta charset="utf-8">
@@ -1145,6 +1176,18 @@ export class MobileAccessGateway {
       await this.closeFailedStart()
       throw error
     }
+  }
+
+  /** Install a newly signed provided leaf for future TLS handshakes without dropping sessions. */
+  async refreshProvidedTls(): Promise<void> {
+    if (!this.listenerTlsEnabled || this.config.tls.mode !== 'provided') {
+      throw new Error('gateway does not terminate provided TLS')
+    }
+    const server = this.server
+    if (server === undefined || !this.started || this.closing) throw new Error('gateway is not running')
+    const options = await tlsOptions(this.config)
+    if (this.server !== server || this.closing) throw new Error('gateway is not running');
+    (server as HttpsServer).setSecureContext(options)
   }
 
   private async startDiscovery(port: number): Promise<void> {
@@ -2797,7 +2840,14 @@ export class MobileAccessGateway {
             const body = await readJsonObject(request, MAX_CONTROL_BODY_BYTES)
             if (body.ttlMs !== undefined && typeof body.ttlMs !== 'number') throw new HttpError(400, 'bad_request')
             const opened = await this.access.openPairing(body.ttlMs as number | undefined)
-            const pairUrl = `${this.address().origin}/mobile-access/pair#instance=${this.config.instanceId}&token=${opened.token}`
+            // A self-signed remote entry must never fall back to public-CA trust.
+            // dsh2 is not understood by old Android apps, so they fail closed.
+            const requiresRemoteCa = this.config.pairingCaFile !== undefined && !this.config.discovery
+            const appKey = `dsh${requiresRemoteCa ? '2' : '1'}.${this.config.instanceId}.${opened.token}`
+            const fragment = requiresRemoteCa
+              ? `key=${appKey}`
+              : `instance=${this.config.instanceId}&token=${opened.token}`
+            const pairUrl = `${this.address().origin}/mobile-access/pair#${fragment}`
             const appPairUrl = pairUrl
             // The QR code is an enhancement; a failed render must not waste an opened window.
             let qrSvg = ''
@@ -2808,7 +2858,7 @@ export class MobileAccessGateway {
             }
             sendJson(response, 201, {
               ...opened,
-              appKey: `dsh1.${this.config.instanceId}.${opened.token}`,
+              appKey,
               pairUrl,
               appPairUrl,
               qrSvg,
