@@ -150,6 +150,8 @@ describe.skipIf(!localLive)('local official FRP data path', () => {
     const gatewayPort = (gatewayServer.address() as AddressInfo).port
     const gateway = {
       address: () => ({ host: '127.0.0.1', port: gatewayPort, origin: `http://127.0.0.1:${String(gatewayPort)}` }),
+      // The self-check compares against the identity this gateway advertises.
+      config: { instanceId },
       close: async () => new Promise<void>(resolve => { gatewayServer.close(() => resolve()) }),
     } as unknown as MobileAccessGateway
     const publicHost = 'dsh.local.example'
@@ -208,6 +210,8 @@ describe.skipIf(!live)('live FRP + frps + Caddy path', () => {
     const port = (server.address() as AddressInfo).port
     const gateway = {
       address: () => ({ host: '127.0.0.1', port, origin: `http://127.0.0.1:${String(port)}` }),
+      // The self-check compares against the identity this gateway advertises.
+      config: { instanceId },
       close: async () => new Promise<void>(resolve => { server.close(() => resolve()) }),
     } as unknown as MobileAccessGateway
     const controller = new FrpController({

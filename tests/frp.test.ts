@@ -58,9 +58,15 @@ async function fixture(): Promise<{
   return { directory, executable, config }
 }
 
-function gateway(): MobileAccessGateway {
+/**
+ * Stand-in for a started gateway. It carries the identity it advertises through
+ * `/mobile-access/discovery`, which the controller's start-up self-check compares
+ * against; on the public-CA path that identity equals the plugin's instance id.
+ */
+function gateway(instanceId = 'a'.repeat(64)): MobileAccessGateway {
   return {
     address: () => ({ host: '127.0.0.1', port: 42123, origin: 'http://127.0.0.1:42123' }),
+    config: { instanceId },
     close: vi.fn(async () => undefined),
   } as unknown as MobileAccessGateway
 }

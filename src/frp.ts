@@ -30,6 +30,15 @@ export interface FrpControllerOptions {
   readonly store: MobileAccessControlStore
   readonly executable: string
   readonly config: FrpConfigStore
+  /**
+   * Plugin-wide installation identity (the LAN pairing CA fingerprint).
+   *
+   * Retained for backward compatibility and constructor validation only. It no
+   * longer takes part in the start-up self-check: that check compares against the
+   * identity of the gateway this controller created and advertises, because the
+   * self-signed FRP ingress gateway is pinned to the ingress CA fingerprint by
+   * design, and that value deliberately differs from this one.
+   */
   readonly instanceId: string
   readonly createGateway: (origin: string, settings: FrpSettings) => Promise<MobileAccessGateway>
   readonly onStatus?: (status: FrpStatus) => void
@@ -320,15 +329,27 @@ export class FrpController implements RemoteProviderController {
     this.publish({ enabled: true, state: 'connecting', origin: settings.publicOrigin })
     const controller = new AbortController()
     this.startupAbort = controller
-    void this.waitForDiscovery(generation, settings.publicOrigin, controller.signal)
+    // The self-check must compare the public advertisement against the identity
+    // *this* gateway advertises, never the plugin-wide installation identity.
+    // The self-signed ingress gateway is pinned to the ingress CA fingerprint
+    // (`frpIngressGatewayConfig`), which is exactly what the app pins from
+    // `pairingCaFile`, so the plugin identity can never match there and the
+    // channel would only ever end in `frp_start_timeout`. For the public-CA entry
+    // both values are equal, so that path is unchanged.
+    void this.waitForDiscovery(generation, settings.publicOrigin, gateway.config.instanceId, controller.signal)
   }
 
-  private async waitForDiscovery(generation: number, origin: string, signal: AbortSignal): Promise<void> {
+  private async waitForDiscovery(
+    generation: number,
+    origin: string,
+    advertisedInstanceId: string,
+    signal: AbortSignal,
+  ): Promise<void> {
     const deadline = Date.now() + (this.options.startTimeoutMs ?? START_TIMEOUT_MS)
     const probe = this.options.probeDiscovery ?? defaultProbeDiscovery
     while (!signal.aborted && Date.now() < deadline) {
       try {
-        if (await probe(origin, this.options.instanceId, signal)) {
+        if (await probe(origin, advertisedInstanceId, signal)) {
           await this.enqueue(async () => {
             if (generation !== this.generation || signal.aborted || !this.enabled) return
             this.startupAbort = undefined
