@@ -130,12 +130,26 @@ export function manualIpCertificateGuide(publicHost: string): string {
   ].join('\n')
 }
 
-/** Build the only supported frps config and Caddy snippet from validated user inputs. */
-export function createRestrictedFrpServerTemplate(serverPort: number, token: string, publicOrigin: string): string {
+/**
+ * Build the only supported frps config and Caddy snippet from validated user inputs.
+ *
+ * Default `options` reproduce the upstream artefact byte for byte; `attach` mode
+ * passes the user's real vhost port, and `self-signed` is rejected because that
+ * mode publishes a raw TCP proxy instead of an HTTP vhost.
+ */
+export function createRestrictedFrpServerTemplate(
+  serverPort: number,
+  token: string,
+  publicOrigin: string,
+  options: CaddySiteOptions = {},
+): string {
   if (!Number.isSafeInteger(serverPort) || serverPort < 1 || serverPort > 65_535
     || token.length < 16 || token.length > 512 || /[\s\u0000-\u001f\u007f]/u.test(token)) {
     throw new Error('frp_template_input_invalid')
   }
+  rejectSelfSignedCaddySite(options)
+  const vhostHttpPort = resolveVhostHttpPort(options)
+  const certDir = options.certDir ?? FRP_CADDY_IP_CERT_DIR
   const publicHost = parsePublicOrigin(publicOrigin)
   const lines = [
     '# frps.toml — save as /etc/dsh-mobile/frps.toml, then start the frps service.',

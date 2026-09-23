@@ -97,6 +97,7 @@ export {
   FrpConfigStore,
   createFrpServerTemplate,
   createFrpcToml,
+  isFrpSelfSignedIngress,
   mergeSavedFrpSettings,
   mergeSavedFrpTarget,
   parseFrpSettings,
@@ -126,6 +127,10 @@ export {
 export { createFrpAttachPlan } from './frp-attach-plan.js'
 export type { FrpAttachOptions, FrpAttachTemplate, FrpAttachVpsParts } from './frp-attach.js'
 export type { FrpAttachPlan, FrpAttachPlanLocal, FrpAttachPlanStep, FrpAttachStepId } from './frp-attach-plan.js'
+export { ensureFrpIngressCertificate, frpIngressPaths, frpIngressSelfCheck } from './frp-ingress.js'
+export type { FrpIngressCertificate, FrpIngressPaths, FrpIngressSelfCheck } from './frp-ingress.js'
+export { issueServerCertificate } from './managed-setup.js'
+export type { ServerCertificateAuthority, ServerCertificateFiles, ServerCertificateTarget } from './managed-setup.js'
 export {
   FRP_CADDY_IMPORT_LINE,
   FRP_CADDY_SNIPPET_MARKER,
@@ -134,6 +139,7 @@ export {
   createRestrictedFrpServerTemplate,
   FRP_VHOST_HTTP_PORT,
 } from './frp-template.js'
+export type { CaddySiteOptions, FrpEntryTls } from './frp-template.js'
 export type { FrpConfigurationStatus, FrpSettings } from './frp-config.js'
 export { FrpController } from './frp.js'
 export type { FrpControllerOptions, FrpState, FrpStatus } from './frp.js'

@@ -261,11 +261,16 @@ function tomlString(value: string): string {
   return JSON.stringify(value)
 }
 
-/** Build the single-purpose frpc configuration for the current loopback gateway. */
+/**
+ * Build the single-purpose frpc configuration for the current loopback gateway.
+ *
+ * The default (public-CA) entry is an HTTP vhost behind Caddy and is emitted byte
+ * for byte as before. The self-signed entry cannot use a vhost at all: frps only
+ * forwards raw TCP, and the gateway terminates TLS on that connection.
+ */
 export function createFrpcToml(settings: FrpSettings, localPort: number): string {
   if (!Number.isSafeInteger(localPort) || localPort < 1 || localPort > 65_535) throw new Error('frp_local_port_invalid')
-  const hostnameValue = new URL(settings.publicOrigin).hostname
-  return [
+  const header = [
     `serverAddr = ${tomlString(settings.serverAddress)}`,
     `serverPort = ${String(settings.serverPort)}`,
     'auth.method = "token"',
@@ -274,6 +279,25 @@ export function createFrpcToml(settings: FrpSettings, localPort: number): string
     '',
     '[[proxies]]',
     'name = "dsh-mobile"',
+  ]
+  if (isFrpSelfSignedIngress(settings)) {
+    return [
+      ...header,
+      // Raw TCP passthrough: frps never terminates or inspects TLS. The DSH
+      // gateway terminates it and the app pins the gateway CA instead of any
+      // public certificate authority.
+      'type = "tcp"',
+      'localIP = "127.0.0.1"',
+      `localPort = ${String(localPort)}`,
+      `remotePort = ${String(resolveFrpPublicPort(settings))}`,
+      'transport.useEncryption = true',
+      'transport.useCompression = true',
+      '',
+    ].join('\n')
+  }
+  const hostnameValue = new URL(settings.publicOrigin).hostname
+  return [
+    ...header,
     'type = "http"',
     'localIP = "127.0.0.1"',
     `localPort = ${String(localPort)}`,

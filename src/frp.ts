@@ -3,7 +3,7 @@ import { lstat, rm } from 'node:fs/promises'
 import { connect } from 'node:net'
 import { isAbsolute } from 'node:path'
 import type { MobileAccessControlStore } from './control.js'
-import type { FrpConfigStore } from './frp-config.js'
+import type { FrpConfigStore, FrpSettings } from './frp-config.js'
 import { DEFAULT_VHOST_HTTP_PORT } from './frp-config.js'
 import type { MobileAccessGateway } from './gateway.js'
 import { settleRemoteResources, terminateRemoteProcess, type RemoteProviderController } from './remote.js'
@@ -31,7 +31,7 @@ export interface FrpControllerOptions {
   readonly executable: string
   readonly config: FrpConfigStore
   readonly instanceId: string
-  readonly createGateway: (origin: string) => Promise<MobileAccessGateway>
+  readonly createGateway: (origin: string, settings: FrpSettings) => Promise<MobileAccessGateway>
   readonly onStatus?: (status: FrpStatus) => void
   readonly verifyConfig?: (executable: string, configFile: string) => Promise<void>
   readonly launchClient?: (executable: string, configFile: string) => ChildProcessWithoutNullStreams
@@ -282,8 +282,11 @@ export class FrpController implements RemoteProviderController {
       return
     }
     let gateway: MobileAccessGateway
-    try { gateway = await this.options.createGateway(settings.publicOrigin) } catch {
-      this.publish({ enabled: true, state: 'error', origin: settings.publicOrigin, errorCode: 'gateway_start_failed' })
+    try { gateway = await this.options.createGateway(settings.publicOrigin, settings) } catch (error) {
+      // Ingress certificate problems carry their own stable code so the panel can
+      // explain how to re-issue it instead of showing a generic start failure.
+      const code = error instanceof Error && error.message.startsWith('frp_') ? error.message : 'gateway_start_failed'
+      this.publish({ enabled: true, state: 'error', origin: settings.publicOrigin, errorCode: code })
       return
     }
     if (generation !== this.generation || !this.enabled) {

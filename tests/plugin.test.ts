@@ -616,6 +616,29 @@ describe('stock DSH lifecycle', () => {
 })
 
 describe('attach-mode control routes', () => {
+  it('previews the attach runbook over loopback without installing anything', async () => {
+    const mounted = await mount()
+    const planRequest = await invoke(mounted.route, 'POST', '/api/mobile-access/remote/frp/attach-plan', JSON.stringify({
+      serverAddress: '1.2.3.4',
+      serverPort: 7000,
+      token: '0123456789abcdef0123456789abcdef',
+      publicOrigin: 'https://1.2.3.4',
+      mode: 'attach',
+      entryTls: 'self-signed',
+      publicPort: 33_080,
+    }))
+    expect(planRequest.status).toBe(200)
+    const parsed = JSON.parse(planRequest.body) as { frpAttachPlan: Record<string, unknown>; frpAttachTemplate: string }
+    expect(parsed.frpAttachPlan).toMatchObject({ mode: 'attach', entryTls: 'self-signed', publicPort: 33_080 })
+    expect(parsed.frpAttachPlan.vps as unknown[]).toHaveLength(3)
+    expect(parsed.frpAttachTemplate).toContain('type = "tcp"')
+    expect(parsed.frpAttachTemplate).toContain('remotePort = 33080')
+    expect(parsed.frpAttachTemplate).toContain('ufw allow 33080/tcp')
+    // A preview must not persist anything.
+    const status = await invoke(mounted.route, 'GET', '/api/mobile-access/remote/control')
+    expect(status.body).not.toContain('0123456789abcdef0123456789abcdef')
+  })
+
   it('reports the documented error codes for attach-mode misconfiguration', async () => {
     const mounted = await mount()
     const missingVhost = await invoke(mounted.route, 'POST', '/api/mobile-access/remote/frp/configure', JSON.stringify({

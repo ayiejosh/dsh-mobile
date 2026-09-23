@@ -66,6 +66,7 @@ import {
 import { createFrpAttachTemplate } from './frp-attach.js'
 import { createFrpAttachPlan } from './frp-attach-plan.js'
 import { FrpController } from './frp.js'
+import { ensureFrpIngressCertificate, frpIngressSelfCheck, type FrpIngressCertificate } from './frp-ingress.js'
 import { OriginConfigStore, parseOriginSettings, validateOriginListenPort, type OriginConfigurationStatus, type OriginSettings } from './origin-proxy-config.js'
 import { OriginController } from './origin-proxy.js'
 import { PluginReleaseManager, releaseProfileDirectory } from './release-update.js'
@@ -326,6 +327,46 @@ export function remoteGatewayConfig(
   })
 }
 
+/**
+ * Gateway config for the self-signed FRP ingress.
+ *
+ * Unlike {@link remoteGatewayConfig}, the gateway itself is the TLS endpoint:
+ * frps only forwards raw TCP, so the listener speaks HTTPS with the leaf that
+ * `pairingCaFile` signed, and the pairing CA is deliberately retained so the
+ * gateway can serve `GET /mobile-access/ca.cer` for the app to pin. The listener
+ * stays on loopback because the public entry is the frps TCP proxy, never a
+ * direct bind.
+ */
+export function frpIngressGatewayConfig(
+  template: ResolvedGatewayConfig,
+  settings: FrpSettings,
+  stateFile: string,
+  ingress: Pick<FrpIngressCertificate, 'paths' | 'caFingerprint'>,
+  listenPort = 0,
+): ResolvedGatewayConfig {
+  if (!isFrpSelfSignedIngress(settings)) throw new Error('frp_entry_tls_invalid')
+  const publicHost = new URL(settings.publicOrigin).hostname
+  const publicAuthority = `${publicHost}:${String(resolveFrpPublicPort(settings))}`
+  const { pairingCaFile: _templateCaFile, ...shared } = template
+  return Object.freeze({
+    ...shared,
+    listenHost: '127.0.0.1',
+    listenPort,
+    authorities: Object.freeze([parseAuthority(publicAuthority)]),
+    // Only frpc originates the connection, from the same computer.
+    allowedCidrs: Object.freeze([parseCidr('127.0.0.0/8')]),
+    stateFile,
+    // The app validates `instance` against the CA it pins (gateway.ts checks the
+    // same fingerprint), so this channel must use the CA fingerprint, not the
+    // plugin-wide installation id.
+    instanceId: ingress.caFingerprint,
+    pairingCaFile: ingress.paths.caCertFile,
+    tls: Object.freeze({ mode: 'provided', certFile: ingress.paths.certFile, keyFile: ingress.paths.keyFile }),
+    publicTls: true,
+    discovery: false,
+  })
+}
+
 /** Reuse remote HTTPS policy while binding a separately validated private HTTP origin. */
 export function originGatewayConfig(
   template: ResolvedGatewayConfig,
@@ -567,6 +608,32 @@ export async function apply(ctx: Context, config: PluginConfig): Promise<void> {
       await candidate.start()
       return candidate
   }
+  /**
+   * Gateway factory for the FRP provider.
+   *
+   * The public-CA entry keeps the ordinary Caddy-fronted remote gateway. The
+   * self-signed entry terminates TLS inside the gateway, so it first materializes
+   * a leaf the pairing CA signed for the public IPv4 and then binds the ingress
+   * configuration that keeps that CA pinned.
+   */
+  const createFrpGateway = async (publicOrigin: string, settings: FrpSettings): Promise<MobileAccessGateway> => {
+    if (!isFrpSelfSignedIngress(settings)) return createRemoteGateway(publicOrigin)
+    const ingress = await ensureFrpIngressCertificate(settings, remoteDeviceFile)
+    const resolved = frpIngressGatewayConfig(template, settings, remoteDeviceFile, ingress)
+    const candidate = new MobileAccessGateway(
+      resolved,
+      new JsonDeviceStore(resolved.stateFile, resolved.maxDevices),
+      mobileAccess,
+      upstreamLoginUrl,
+      webSocketPaths,
+      blockedUpgradePaths,
+    )
+    try { await candidate.start() } catch (error) {
+      await candidate.close()
+      throw error
+    }
+    return candidate
+  }
   const createOriginGateway = async (settings: OriginSettings): Promise<MobileAccessGateway> => {
     const resolved = originGatewayConfig(template, settings, remoteDeviceFile, instanceId)
     const candidate = new MobileAccessGateway(
@@ -609,7 +676,7 @@ export async function apply(ctx: Context, config: PluginConfig): Promise<void> {
       executable: frpComponent.executable,
       config: frpConfig,
       instanceId,
-      createGateway: createRemoteGateway,
+      createGateway: createFrpGateway,
     }),
     origin: new OriginController({ store: originStore, config: originConfig, createGateway: createOriginGateway }),
   }

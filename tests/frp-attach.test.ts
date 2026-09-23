@@ -87,6 +87,26 @@ describe('attach artefacts for an existing frps', () => {
     }))).toThrow('frp_settings_invalid')
   })
 
+  it('builds a raw TCP passthrough for the self-signed entry', () => {
+    const settings = attachSettings({ entryTls: 'self-signed' })
+    const parts = createFrpAttachTemplateParts(settings)
+    expect(parts.local).toContain('type = "tcp"')
+    expect(parts.local).toContain('remotePort = 33080')
+    expect(parts.local).toContain('localIP = "127.0.0.1"')
+    expect(parts.local).not.toContain('customDomains')
+    expect(parts.vps).toContain('ufw allow 33080/tcp')
+    expect(parts.vps).toContain('https://1.2.3.4:33080/mobile-access/discovery')
+    expect(parts.vps).toContain('curl -k')
+    // No Caddy and no certificate files exist in this mode at all.
+    expect(parts.vps).not.toContain('caddy')
+    expect(parts.vps).not.toContain('certbot')
+    expect(parts.vps).not.toContain('vhostHTTPPort')
+    // A configurable public port flows into both halves.
+    const custom = createFrpAttachTemplateParts(attachSettings({ entryTls: 'self-signed', publicPort: 34_443 }))
+    expect(custom.local).toContain('remotePort = 34443')
+    expect(custom.vps).toContain('ufw allow 34443/tcp')
+  })
+
   it('builds a zero-SSH plan without any network access', async () => {
     const fetchSpy = vi.spyOn(globalThis, 'fetch')
     const directory = await mkdtemp(join(tmpdir(), 'dsh-mobile-attach-'))
@@ -108,5 +128,27 @@ describe('attach artefacts for an existing frps', () => {
     expect(selfSigned.publicPort).toBe(33_080)
     expect(selfSigned.vps[0]?.commands[0]).toBe('ufw allow 33080/tcp')
     expect(selfSigned.warnings.join('\n')).toContain('切勿把网关 listenHost 改成 0.0.0.0')
+  })
+})
+
+describe('attach token masking, explicit reveal, and the self-signed transport switches', () => {
+
+  it('keeps both transport switches on for the self-signed passthrough (QA D6)', () => {
+    const settings = attachSettings({ entryTls: 'self-signed' })
+    for (const frpcToml of [
+      createFrpAttachPlan(settings).local.frpcToml,
+      createFrpAttachTemplateParts(settings).local,
+    ]) {
+      expect(frpcToml).toContain('type = "tcp"')
+      expect(frpcToml).toContain('remotePort = 33080')
+      expect(frpcToml).toContain('transport.useEncryption = true')
+      expect(frpcToml).toContain('transport.useCompression = true')
+      expect(frpcToml).not.toContain('customDomains')
+    }
+    // A custom public port still flows through with the switches intact.
+    const custom = createFrpAttachPlan(attachSettings({ entryTls: 'self-signed', publicPort: 34_443 })).local.frpcToml
+    expect(custom).toContain('remotePort = 34443')
+    expect(custom).toContain('transport.useEncryption = true')
+    expect(custom).toContain('transport.useCompression = true')
   })
 })

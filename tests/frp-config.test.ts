@@ -159,4 +159,16 @@ describe('attach mode and entry TLS settings', () => {
     expect(mergeSavedFrpSettings({ ...input, mode: 'attach', vhostHttpPort: 9090 }, saved).vhostHttpPort).toBe(9090)
     expect(mergeSavedFrpSettings({ ...input, mode: 'attach', vhostHttpPort: 9090 }, saved).mode).toBe('attach')
   })
+
+  it('emits a raw TCP proxy for the self-signed entry only', () => {
+    const tcp = createFrpcToml(parseFrpSettings({ ...input, mode: 'attach', entryTls: 'self-signed', publicPort: 33_080 }), 41234)
+    expect(tcp).toContain('type = "tcp"')
+    expect(tcp).toContain('remotePort = 33080')
+    expect(tcp).toContain('localIP = "127.0.0.1"')
+    expect(tcp).toContain('transport.tls.enable = true')
+    expect(tcp).not.toContain('customDomains')
+    const http = createFrpcToml(parseFrpSettings(input), 41234)
+    expect(http).toContain('type = "http"')
+    expect(http).not.toContain('remotePort')
+  })
 })
