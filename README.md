@@ -8,7 +8,7 @@
 
 <p align="center">
   <a href="https://www.npmjs.com/package/dsh-mobile"><img src="https://img.shields.io/npm/v/dsh-mobile?label=npm&color=CB3837" alt="npm 版本"></a>
-  <a href="https://www.npmjs.com/package/dsh-mobile"><img src="https://img.shields.io/npm/dm/dsh-mobile?label=downloads&color=2563EB" alt="npm 月下载量"></a>
+  <a href="https://www.npmjs.com/package/dsh-mobile"><img src="https://img.shields.io/npm/dt/dsh-mobile?label=downloads&color=2563EB" alt="npm 总下载量"></a>
   <a href="https://github.com/saya-ch/dsh-mobile/actions/workflows/ci.yml"><img src="https://github.com/saya-ch/dsh-mobile/actions/workflows/ci.yml/badge.svg" alt="CI"></a>
   <a href="https://github.com/saya-ch/dsh-mobile/releases"><img src="https://img.shields.io/badge/Android-10%2B-3DDC84?logo=android&logoColor=white" alt="Android 10+"></a>
   <a href="LICENSE"><img src="https://img.shields.io/badge/license-Apache--2.0-0F172A" alt="Apache-2.0"></a>
@@ -31,14 +31,14 @@
 
 > DSH Mobile 是 DeepSeek Harness 社区插件，原生 App 仅支持 Android。
 >
-> **0.4.4 更新**：局域网发现遇到运行期 mDNS/UDP 错误时不再带崩 DSH；组件下载也能处理缺少 `Content-Length` 的代理响应。[详细记录](CHANGELOG.md)。
+> **0.4.5 更新**：适配 DSH `0.1.7-alpha.2` 的移动端启动脚本地址，修复重连异常与失败资源的长期缓存，并为 App 的连接恢复增加退出入口。[详细记录](CHANGELOG.md)。
 >
-> **升级提醒**：0.4.4 插件可继续使用现有 Android App，已有设备无需重新配对。若要使用本次 Android 构建，请安装 0.4.4 App。[兼容说明](#兼容性)。
+> **升级提醒**：建议插件与 Android App 同步更新至 0.4.5；已有配对会保留，旧版 App 仍可连接，但需要新版 App 才能使用连接恢复时的重试和设备列表入口。[兼容说明](#兼容性)。
 
 <p align="center">
-  <a href="https://github.com/saya-ch/dsh-mobile/releases/download/v0.4.4/dsh-mobile-android-v0.4.4.apk"><img src="assets/brand/app-icon-rounded.svg" alt="DSH Mobile 安卓应用图标" width="72" height="72"></a><br>
-  <a href="https://github.com/saya-ch/dsh-mobile/releases/download/v0.4.4/dsh-mobile-android-v0.4.4.apk"><strong>下载 Android App 0.4.4</strong></a><br>
-  <sub><a href="https://github.com/saya-ch/dsh-mobile/releases/tag/v0.4.4">版本说明与校验文件</a></sub>
+  <a href="https://github.com/saya-ch/dsh-mobile/releases/download/v0.4.5/dsh-mobile-android-v0.4.5.apk"><img src="assets/brand/app-icon-rounded.svg" alt="DSH Mobile 安卓应用图标" width="72" height="72"></a><br>
+  <a href="https://github.com/saya-ch/dsh-mobile/releases/download/v0.4.5/dsh-mobile-android-v0.4.5.apk"><strong>下载 Android App 0.4.5</strong></a><br>
+  <sub><a href="https://github.com/saya-ch/dsh-mobile/releases/tag/v0.4.5">版本说明与校验文件</a></sub>
 </p>
 
 DSH Mobile 是一个 DeepSeek Harness 插件，让手机浏览器或 Android App 通过局域网，或可选的 Tailscale Funnel、cpolar、cloudflared、自建 FRP 或自有反向代理远程通道连接电脑，继续使用同一份会话、工作区、消息和工具。局域网与远程访问分别启停、分别管理设备，且都不修改 DeepSeek Harness 源码。
@@ -55,7 +55,7 @@ DSH Mobile 是一个 DeepSeek Harness 插件，让手机浏览器或 Android App
 - **多种远程通道**：Tailscale、cpolar、cloudflared 快速/命名隧道、自建 FRP、自有反向代理，按网络任选。
 - **配对与多设备**：扫码、链接或密钥配对一次；切换 Wi-Fi、热点或 IP 后通常自动恢复；App 在一个设备列表中同时显示多台已配对电脑（局域网与全部远程），每台实时显示可达状态，一键切换、重新配对或删除。
 - **一键诊断与放行**：检查版本、网关、网卡、防火墙和远程通道，生成脱敏报告；被拦截的第三方插件连接按确切路径一键放行。
-- **任务系统通知**：任务完成与待输入以 Android 系统通知推送，在 App 前台菜单开启，锁屏文本脱敏。
+- **任务系统通知**：任务完成与待输入以 Android 系统通知提醒，可在 App 内的 DSH 常规设置中开启，锁屏文本脱敏。
 - **纵深安全**：独立 HTTPS 与证书固定，凭据存 Keystore，设备令牌只发往精确 Origin，第三方 WS 默认拦截。
 
 配对设备被视为完全信任，可以操作电脑上的 DSH；建议只在可信的家庭、办公局域网或可信 VPN 中使用。
@@ -216,7 +216,7 @@ Android App 用一个“已配对设备”列表同时显示多台电脑：局�
 
 代理页面为兼容部分社区插件允许嵌入 HTTP 页面；这类内容未加密，可能被篡改，浏览器也可能因混合内容策略拦截。处理敏感内容时请使用 HTTPS。通过 HTTPS 管理入口打开远程面板时，页面顶部会显示相同提醒。
 
-- 0.4.4 按 DSH `0.1.6-alpha.2` 做 renderer-v2 契约检查。DSH 页面需要提供标准的会话、`main`/`panelInfo` 和 `rightbar` 插槽；插件自身需要通过 DSH 的标准面板或侧边栏入口注册内容。
+- 0.4.5 已按 DSH `0.1.7-alpha.2` 做 renderer-v2 契约检查与启动包联调。DSH 页面需要提供标准的会话、`main`/`panelInfo` 和 `rightbar` 插槽；插件自身需要通过 DSH 的标准面板或侧边栏入口注册内容。
 - 网关默认只允许 DSH 内置的第一方 WebSocket 路径。社区侧边栏插件使用的其他路径默认拦截，通常会在诊断页显示为待处理项目；截图中的`/sidebar/ws/agent-opens` 和`/sidebar/ws/agent-terminals` 就属于这类需要按实际插件确认的路径。
 - 在 **连接诊断 → 第三方 WebSocket 路径** 中，只对确认过的精确路径点击 **允许**。系统不接受带查询字符串或模糊前缀的路径；不建议使用“全部允许”。已允许的路径可以随时移除，局域网和远程连接使用同一套规则。
 - 放行只代表该路径可以通过已认证、同源的 DSH Mobile 网关，不会开放任意 TCP/UDP 端口，也不会绕过设备配对。若社区插件仍然连接失败，先看诊断页的实际拦截路径，再按一条路径放行。
@@ -286,7 +286,7 @@ flowchart LR
 
 ## 兼容性
 
-下表列出各插件版本验证支持到的 DeepSeek Harness 版本（早于该版本的 0.1.x 均兼容）。0.3.6 起插件不再按版本号拒绝启动，未列出的更新版本由 CI 契约检查兜底。历史记录见 [CHANGELOG.md](CHANGELOG.md)。
+下表记录已验证的 DSH 与插件版本组合，不表示其他版本自动兼容。0.3.6 起插件不会仅凭版本号拒绝启动；升级 DSH 后若遇到移动端异常，请先核对兼容表并更新插件。历史记录见 [CHANGELOG.md](CHANGELOG.md)。
 
 ### 系统支持矩阵
 
@@ -301,11 +301,9 @@ flowchart LR
 
 macOS 上局域网、自建 FRP 与自有反向代理可用；三个托管组件暂未提供 macOS 包。诊断页的防火墙检查目前仅覆盖 Windows，其他系统显示“不适用”。
 
-未发布的本地修复已通过 DSH `0.1.7-alpha.2` 的兼容检查及网关联调；已发布的 `0.4.4` 仍以 `0.1.6-alpha.2` 为验证基线。
-
-
 | DSH Mobile 插件                         | 验证支持的 DeepSeek Harness 版本                             |
 | ----------------------------------------- | -------------------------------------------------------------- |
+| `0.4.5` | `0.1.7-alpha.2`（源码契约检查、本机局域网及远程网关联调） |
 | `0.4.4` | `0.1.6-alpha.2`（本机源码与 renderer-v2 契约检查） |
 | `0.4.3` | `0.1.6-alpha.2`（本机源码与 renderer-v2 契约检查） |
 | `0.4.2` | `0.1.6-alpha.1`（本机源码与 renderer-v2 契约检查） |

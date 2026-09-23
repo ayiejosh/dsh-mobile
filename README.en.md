@@ -8,7 +8,7 @@
 
 <p align="center">
   <a href="https://www.npmjs.com/package/dsh-mobile"><img src="https://img.shields.io/npm/v/dsh-mobile?label=npm&amp;color=CB3837" alt="npm version"></a>
-  <a href="https://www.npmjs.com/package/dsh-mobile"><img src="https://img.shields.io/npm/dm/dsh-mobile?label=downloads&amp;color=2563EB" alt="monthly npm downloads"></a>
+  <a href="https://www.npmjs.com/package/dsh-mobile"><img src="https://img.shields.io/npm/dt/dsh-mobile?label=downloads&amp;color=2563EB" alt="total npm downloads"></a>
   <a href="https://github.com/saya-ch/dsh-mobile/actions/workflows/ci.yml"><img src="https://github.com/saya-ch/dsh-mobile/actions/workflows/ci.yml/badge.svg" alt="CI"></a>
   <a href="https://github.com/saya-ch/dsh-mobile/releases"><img src="https://img.shields.io/badge/Android-10%2B-3DDC84?logo=android&amp;logoColor=white" alt="Android 10+"></a>
   <a href="LICENSE"><img src="https://img.shields.io/badge/license-Apache--2.0-0F172A" alt="Apache-2.0"></a>
@@ -31,14 +31,14 @@
 
 > DSH Mobile is a DeepSeek Harness community plugin; the native app supports Android only.
 >
-> **0.4.4 update**: runtime mDNS or UDP discovery errors no longer take down DSH, and component downloads accept proxy responses without `Content-Length`. [Details](CHANGELOG.md).
+> **0.4.5 update**: support DSH `0.1.7-alpha.2` mobile boot URLs, fix reconnect failures and long-lived caching of failed resources, and add an exit from App connection restoration. [Details](CHANGELOG.md).
 >
-> **Upgrade reminder**: the 0.4.4 plugin continues to work with existing Android apps and paired devices do not need re-pairing. Install the 0.4.4 app if you want this Android build. [Compatibility notes](#compatibility).
+> **Upgrade reminder**: update both the plugin and Android app to 0.4.5 when practical. Existing pairings are retained and older apps can still connect, but Retry and Device list during connection restoration require the new app. [Compatibility notes](#compatibility).
 
 <p align="center">
-  <a href="https://github.com/saya-ch/dsh-mobile/releases/download/v0.4.4/dsh-mobile-android-v0.4.4.apk"><img src="assets/brand/app-icon-rounded.svg" alt="DSH Mobile Android app icon" width="72" height="72"></a><br>
-  <a href="https://github.com/saya-ch/dsh-mobile/releases/download/v0.4.4/dsh-mobile-android-v0.4.4.apk"><strong>Download Android app 0.4.4</strong></a><br>
-  <sub><a href="https://github.com/saya-ch/dsh-mobile/releases/tag/v0.4.4">Release notes and checksums</a></sub>
+  <a href="https://github.com/saya-ch/dsh-mobile/releases/download/v0.4.5/dsh-mobile-android-v0.4.5.apk"><img src="assets/brand/app-icon-rounded.svg" alt="DSH Mobile Android app icon" width="72" height="72"></a><br>
+  <a href="https://github.com/saya-ch/dsh-mobile/releases/download/v0.4.5/dsh-mobile-android-v0.4.5.apk"><strong>Download Android app 0.4.5</strong></a><br>
+  <sub><a href="https://github.com/saya-ch/dsh-mobile/releases/tag/v0.4.5">Release notes and checksums</a></sub>
 </p>
 
 DSH Mobile is a DeepSeek Harness plugin that lets a mobile browser or the Android app connect over a protected LAN or an optional Tailscale Funnel, cpolar, cloudflared, self-hosted FRP, or own reverse-proxy remote path. Local and remote access keep the same sessions, Workspaces, messages, and tools while using separate switches and paired-device stores without modifying DeepSeek Harness source.
@@ -55,7 +55,7 @@ It also lets you customize the phone from a DSH conversation: `/mobile <what you
 - **Every remote path covered**: Tailscale, cpolar, cloudflared quick/named tunnels, self-hosted FRP, or your own reverse proxy.
 - **Pairing and multi-device**: pair once via QR code, link, or key; Wi-Fi, hotspot, or IP changes normally recover automatically; the app shows all paired computers together in one device list (LAN and every remote), each with live reachability — switch, re-pair, or delete in one tap.
 - **One-click diagnostics and approval**: check versions, gateway, network interface, firewall, and the remote path with a redacted report; approve blocked third-party plugin connections per exact path.
-- **Task system notifications**: completion and pending-input alerts via Android system notifications, enabled from the app foreground menu, with redacted lock-screen text.
+- **Task system notifications**: completion and pending-input alerts via Android system notifications, enabled from DSH General settings inside the app, with redacted lock-screen text.
 - **Defense in depth**: dedicated HTTPS with pinned certificates, Keystore-backed credentials, device tokens sent only to their exact Origin, third-party WebSockets blocked by default.
 
 A paired device is fully trusted and can operate the DSH on the computer. Use this only on a trusted home or office LAN, or a trusted VPN.
@@ -216,7 +216,7 @@ Compatibility and WebSocket rules:
 
 Proxied pages allow HTTP frames for compatibility with some community plugins; those pages are unencrypted and can be altered, and browsers may still block them as mixed content. Use HTTPS for sensitive work. The same warning appears at the top of the remote panel when it is opened over HTTPS.
 
-- Version 0.4.4 is contract-checked against DSH `0.1.6-alpha.2` (renderer-v2). The DSH page must expose the standard session, `main`/`panelInfo`, and `rightbar` slots; the community plugin must register its panel or sidebar content through DSH's standard entry points.
+- Version 0.4.5 has been contract-checked and boot-tested against DSH `0.1.7-alpha.2` (renderer-v2). The DSH page must expose the standard session, `main`/`panelInfo`, and `rightbar` slots; the community plugin must register its panel or sidebar content through DSH's standard entry points.
 - The gateway allows first-party DSH WebSocket paths by default, including `/sidebar/ws/terminal`. Other paths used by community sidebar plugins are blocked by default and appear in Diagnostics; the `/sidebar/ws/agent-opens` and `/sidebar/ws/agent-terminals` paths in the image are examples that must be reviewed for the actual plugin.
 - In **Connection diagnostics → Third-party WebSocket paths**, select **Allow** only for an exact path you have verified. Query strings and fuzzy prefixes are rejected; **Allow all** is not recommended. Approved paths can be removed at any time, and the same policy applies to LAN and remote connections.
 - Approval only lets that path pass through the authenticated, same-origin DSH Mobile gateway. It does not open arbitrary TCP/UDP ports or bypass device pairing. If a community plugin still fails, check the path recorded by Diagnostics and approve one path at a time.
@@ -286,7 +286,7 @@ See [SECURITY.md](SECURITY.md).
 
 ## Compatibility
 
-The table below lists, for each plugin version, the DeepSeek Harness version it is verified to support (earlier 0.1.x releases are compatible as well). Starting with 0.3.6 the plugin no longer rejects a DSH version by number alone; newer unlisted versions are covered by CI's contract checks. History lives in [CHANGELOG.md](CHANGELOG.md).
+The table records tested DSH and plugin version combinations; it does not imply automatic compatibility with other versions. Since 0.3.6 the plugin has not rejected DSH solely by version number. If mobile access breaks after upgrading DSH, check this table and update the plugin first. History lives in [CHANGELOG.md](CHANGELOG.md).
 
 ### OS support matrix
 
@@ -301,10 +301,9 @@ The table below lists, for each plugin version, the DeepSeek Harness version it 
 
 On macOS, local network, self-hosted FRP, and the own reverse proxy work; the three managed components have no macOS build yet. The diagnostics firewall check currently covers Windows only and reports “not applicable” elsewhere.
 
-The unpublished local fix passed the DSH `0.1.7-alpha.2` compatibility check and gateway integration test; the published `0.4.4` remains verified against `0.1.6-alpha.2`.
-
 | DSH Mobile plugin | Verified DeepSeek Harness version |
 | --- | --- |
+| `0.4.5` | `0.1.7-alpha.2` (source contract check, local and remote gateway integration) |
 | `0.4.4` | `0.1.6-alpha.2` (local source and renderer-v2 contract check) |
 | `0.4.3` | `0.1.6-alpha.2` (local source and renderer-v2 contract check) |
 | `0.4.2` | `0.1.6-alpha.1` (local source and renderer-v2 contract check) |
