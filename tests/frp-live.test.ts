@@ -165,7 +165,7 @@ describe.skipIf(!localLive)('local official FRP data path', () => {
       instanceId,
       createGateway: async () => gateway,
       probeVhostExposure: async () => false,
-      probeDiscovery: async (_origin, expected, signal) => probeLocalDiscovery(vhostPort, publicHost, expected, signal),
+      probeDiscovery: async (_target, expected, signal) => probeLocalDiscovery(vhostPort, publicHost, expected, signal),
       startTimeoutMs: 30_000,
       retryIntervalMs: 200,
     })

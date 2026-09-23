@@ -93,7 +93,13 @@ describe('FRP provider lifecycle', () => {
     await controller.initialize()
     await controller.setEnabled(true)
     await vi.waitFor(() => { expect(controller.status()).toEqual({ enabled: true, state: 'ready', origin: 'https://dsh.example.com' }) })
-    expect(probeDiscovery).toHaveBeenCalledWith('https://dsh.example.com', 'a'.repeat(64), expect.any(AbortSignal))
+    // The public-CA entry keeps the saved origin and the system trust store: the
+    // explicit target must therefore carry no trust anchor at all.
+    expect(probeDiscovery).toHaveBeenCalledWith(
+      { origin: 'https://dsh.example.com' },
+      'a'.repeat(64),
+      expect.any(AbortSignal),
+    )
     await controller.setEnabled(false)
     expect(controller.status()).toEqual({ enabled: false, state: 'off' })
     expect(activeGateway.close).toHaveBeenCalledOnce()

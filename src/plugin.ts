@@ -66,7 +66,7 @@ import {
 import { createFrpAttachTemplate } from './frp-attach.js'
 import { createFrpAttachPlan } from './frp-attach-plan.js'
 import { FrpController } from './frp.js'
-import { ensureFrpIngressCertificate, frpIngressSelfCheck, type FrpIngressCertificate } from './frp-ingress.js'
+import { ensureFrpIngressCertificate, frpIngressPaths, frpIngressSelfCheck, type FrpIngressCertificate } from './frp-ingress.js'
 import { OriginConfigStore, parseOriginSettings, validateOriginListenPort, type OriginConfigurationStatus, type OriginSettings } from './origin-proxy-config.js'
 import { OriginController } from './origin-proxy.js'
 import { PluginReleaseManager, releaseProfileDirectory } from './release-update.js'
@@ -365,6 +365,22 @@ export function frpIngressGatewayConfig(
     publicTls: true,
     discovery: false,
   })
+}
+
+/**
+ * CA the FRP start-up self-check must pin, read from the ingress directory.
+ *
+ * The self-signed entry presents a leaf signed by this CA, which is absent from
+ * the system trust store, so the probe must anchor it exactly as the app does
+ * when it pins `pairingCaFile`. The public-CA entry answers with a publicly
+ * trusted certificate and therefore returns `undefined` (system trust store).
+ * An unreadable CA is also `undefined` on purpose: the probe then keeps its
+ * default chain and its existing retry/timeout behaviour instead of failing with
+ * a new error code.
+ */
+export async function readFrpIngressTrustAnchor(settings: FrpSettings, stateFile: string): Promise<string | undefined> {
+  if (!isFrpSelfSignedIngress(settings)) return undefined
+  try { return await readFile(frpIngressPaths(stateFile).caCertFile, 'utf8') } catch { return undefined }
 }
 
 /** Reuse remote HTTPS policy while binding a separately validated private HTTP origin. */
@@ -677,6 +693,13 @@ export async function apply(ctx: Context, config: PluginConfig): Promise<void> {
       config: frpConfig,
       instanceId,
       createGateway: createFrpGateway,
+      /**
+       * Hand the start-up self-check the CA the app itself pins.
+       *
+       * Only this module knows where the ingress material lives, so the anchor is
+       * read here from the ingress directory instead of being guessed downstream.
+       */
+      resolveDiscoveryTrustAnchor: settings => readFrpIngressTrustAnchor(settings, remoteDeviceFile),
     }),
     origin: new OriginController({ store: originStore, config: originConfig, createGateway: createOriginGateway }),
   }

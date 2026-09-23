@@ -7,7 +7,7 @@ import type { ChildProcessWithoutNullStreams } from 'node:child_process'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import type { MobileAccessControlState, MobileAccessControlStore } from '../src/control.js'
 import { FrpConfigStore } from '../src/frp-config.js'
-import { FrpController, type FrpControllerOptions } from '../src/frp.js'
+import { FrpController, type FrpControllerOptions, type FrpDiscoveryProbeTarget } from '../src/frp.js'
 import type { MobileAccessGateway } from '../src/gateway.js'
 
 /**
@@ -118,7 +118,7 @@ describe('FRP self-check identity', () => {
     const createGateway = vi.fn(async () => activeGateway)
     // Mirrors `defaultProbeDiscovery`: the endpoint advertises the ingress CA
     // fingerprint, so any other expected id is an immediate mismatch.
-    const probeDiscovery = vi.fn(async (_origin: string, expectedInstanceId: string) => {
+    const probeDiscovery = vi.fn(async (_target: FrpDiscoveryProbeTarget, expectedInstanceId: string) => {
       if (expectedInstanceId !== INGRESS_INSTANCE_ID) throw new Error('frp_discovery_mismatch')
       return true
     })
@@ -130,7 +130,12 @@ describe('FRP self-check identity', () => {
     await controller.initialize()
     await controller.setEnabled(true)
 
-    expect(probeDiscovery).toHaveBeenCalledWith('https://dsh.example.com', INGRESS_INSTANCE_ID, expect.any(AbortSignal))
+    // The self-signed entry is dialled on its public TCP port, never on 443.
+    expect(probeDiscovery).toHaveBeenCalledWith(
+      { origin: 'https://dsh.example.com:33080' },
+      INGRESS_INSTANCE_ID,
+      expect.any(AbortSignal),
+    )
     await vi.waitFor(() => {
       expect(controller.status()).toEqual({ enabled: true, state: 'ready', origin: 'https://dsh.example.com' })
     })
@@ -167,7 +172,7 @@ describe('FRP self-check identity', () => {
   it('still fails immediately when the public entry advertises an unknown identity', async () => {
     const { executable, config } = await fixture()
     await configureSelfSignedIngress(config)
-    const probeDiscovery = vi.fn(async (_origin: string, expectedInstanceId: string) => {
+    const probeDiscovery = vi.fn(async (_target: FrpDiscoveryProbeTarget, expectedInstanceId: string) => {
       // A replaced/renewed ingress certificate would advertise a third identity.
       if (expectedInstanceId === INGRESS_INSTANCE_ID) throw new Error('frp_discovery_mismatch')
       return true
@@ -194,7 +199,7 @@ describe('FRP self-check identity', () => {
     const { executable, config } = await fixture()
     const activeGateway = gateway(LAN_INSTANCE_ID)
     const probeVhostExposure = vi.fn(async () => false)
-    const probeDiscovery = vi.fn(async (_origin: string, expectedInstanceId: string) => {
+    const probeDiscovery = vi.fn(async (_target: FrpDiscoveryProbeTarget, expectedInstanceId: string) => {
       if (expectedInstanceId !== LAN_INSTANCE_ID) throw new Error('frp_discovery_mismatch')
       return true
     })
@@ -208,7 +213,11 @@ describe('FRP self-check identity', () => {
     await controller.setEnabled(true)
 
     expect(probeVhostExposure).toHaveBeenCalledWith('frp.example.com', 7080)
-    expect(probeDiscovery).toHaveBeenCalledWith('https://dsh.example.com', LAN_INSTANCE_ID, expect.any(AbortSignal))
+    expect(probeDiscovery).toHaveBeenCalledWith(
+      { origin: 'https://dsh.example.com' },
+      LAN_INSTANCE_ID,
+      expect.any(AbortSignal),
+    )
     await vi.waitFor(() => { expect(controller.status().state).toBe('ready') })
     await controller.close()
   })
