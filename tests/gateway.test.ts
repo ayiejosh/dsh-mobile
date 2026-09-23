@@ -205,7 +205,7 @@ function websocketBinaryFrame(payload: Buffer): Buffer {
 }
 
 async function upstream(
-  boot: 'legacy' | 'batched' | 'remote-settings' = 'legacy',
+  boot: 'legacy' | 'batched' | 'batched-relative' | 'batched-relative-invalid' | 'remote-settings' = 'legacy',
   requireAuthentication = false,
   upgradeBurst: Buffer = Buffer.alloc(0),
   upgradeHeaderLines: string[] = [],
@@ -250,20 +250,26 @@ async function upstream(
       return
     }
     if (incoming.url === '/' && incoming.headers.accept?.includes('text/html')) {
+      const pluginUrl = (id: string, name: string, rev: string): string => {
+        if (boot === 'batched-relative-invalid' && id === 'feature') return 'plugins/../api/secret'
+        return boot === 'batched-relative' || boot === 'batched-relative-invalid'
+          ? `plugins/??${id}/client.js&rev=${rev}`
+          : `/plugins/${name}.js?rev=${rev}`
+      }
       const entries = boot === 'legacy'
         ? [
             { id: '@deepseek-ai/dsh-client-ui-layout', url: '/plugins/layout.js', rev: 'stock-layout', inject: ['@deepseek-ai/dsh-client-runtime', '@deepseek-ai/dsh-client-ui-theme'] },
             { id: 'feature', url: '/plugins/feature.js', rev: 'feature' },
           ]
         : [
-            { id: '@deepseek-ai/dsh-client-ui-renderer', url: '/plugins/renderer.js?rev=renderer', rev: 'renderer' },
+            { id: '@deepseek-ai/dsh-client-ui-renderer', url: pluginUrl('@deepseek-ai/dsh-client-ui-renderer', 'renderer', 'renderer'), rev: 'renderer' },
             {
               id: '@deepseek-ai/dsh-client-ui-layout',
-              url: '/plugins/layout.js?rev=layout',
+              url: pluginUrl('@deepseek-ai/dsh-client-ui-layout', 'layout', 'layout'),
               rev: 'layout',
               inject: ['@deepseek-ai/dsh-client-locale', '@deepseek-ai/dsh-client-ui-renderer', '@deepseek-ai/dsh-client-ui-session', '@deepseek-ai/dsh-client-ui-theme'],
             },
-            { id: 'feature', url: '/plugins/feature.js?rev=feature', rev: 'feature' },
+            { id: 'feature', url: pluginUrl('feature', 'feature', 'feature'), rev: 'feature' },
           ]
       if (boot === 'remote-settings') entries.push(
         { id: '@deepseek-ai/dsh-client-connection', url: '/plugins/connection.js?rev=connection', rev: 'connection', inject: [] },
@@ -274,13 +280,13 @@ async function upstream(
       )
       const graph = boot === 'legacy'
         ? { rev: 'stock', entries }
-        : { rev: 'stock', entries, batches: [{ phase: 'application', url: '/plugins/application.js?rev=stock', rev: 'stock-batch', entries: entries.map(entry => entry.id) }] }
+        : { rev: 'stock', entries, batches: [{ phase: 'application', url: boot === 'batched-relative' || boot === 'batched-relative-invalid' ? 'plugins/??feature/client.js&rev=stock' : '/plugins/application.js?rev=stock', rev: 'stock-batch', entries: entries.map(entry => entry.id) }] }
       const body = `<!doctype html><html><head><script>globalThis["__DSH_BOOT__"] = ${JSON.stringify(graph)};</script></head><body></body></html>`
       response.writeHead(200, { 'content-type': 'text/html; charset=utf-8', 'content-length': Buffer.byteLength(body) })
       response.end(body)
       return
     }
-    if (boot === 'batched' && incoming.url?.startsWith('/plugins/') === true) {
+    if ((boot === 'batched' || boot === 'batched-relative' || boot === 'batched-relative-invalid') && incoming.url?.startsWith('/plugins/') === true) {
       if (await batchedBundleResponder?.(incoming, response) === true) return
       const body = `globalThis.__loadedMobileFixture ??= []; globalThis.__loadedMobileFixture.push(${JSON.stringify(incoming.url)});\n`
       response.writeHead(200, { 'content-type': 'text/javascript; charset=utf-8', 'content-length': Buffer.byteLength(body) })
@@ -791,6 +797,57 @@ describe('HTTP gateway', () => {
     expect(inner.observations.map(observation => observation.url)).toContain('/plugins/feature.js?rev=feature')
     expect(inner.observations.map(observation => observation.url)).not.toContain('/plugins/layout.js?rev=layout')
     expect(inner.observations.map(observation => observation.url)).not.toContain('/plugins/application.js?rev=stock')
+  })
+
+  it('serves a DSH 0.1.7 mobile application batch with document-relative plugin URLs', async () => {
+    const inner = await upstream('batched-relative')
+    const directory = await mkdtemp(join(tmpdir(), 'dsh-mobile-relative-layout-'))
+    cleanups.push(() => rm(directory, { recursive: true, force: true }))
+    const mobileLayoutFile = join(directory, 'mobile-layout.js')
+    await writeFile(mobileLayoutFile, 'globalThis.__dedicatedMobileLayout = true;\n', 'utf8')
+    const instance = await gateway(inner.port, { mobileLayoutFile })
+    const paired = await pair(instance)
+    const headers = {
+      ...browserHeaders(instance),
+      accept: 'text/html,application/xhtml+xml',
+      cookie: `${SESSION_COOKIE}=${paired.session}`,
+    }
+
+    const mobile = await request(instance.address().port, '/', { headers })
+    expect(mobile.status).toBe(200)
+    const path = /"url":"(\/mobile-access\/mobile-boot\/[a-f\d]{64}\.js)"/u.exec(mobile.body)?.[1]
+    expect(path).toBeDefined()
+    const batch = await request(instance.address().port, path!, { headers })
+    expect(batch.status).toBe(200)
+    expect(batch.body).toContain('/plugins/??@deepseek-ai/dsh-client-ui-renderer/client.js&rev=renderer')
+    expect(batch.body).toContain('__dedicatedMobileLayout = true')
+    expect(batch.body).toContain('/plugins/??feature/client.js&rev=feature')
+    expect(batch.body).not.toContain('/plugins/??@deepseek-ai/dsh-client-ui-layout/client.js&rev=layout')
+    expect(inner.observations.filter(entry => entry.headers['x-dsh-mobile-size-probe'] === '1').map(entry => entry.url))
+      .toContain('/plugins/??@deepseek-ai/dsh-client-ui-renderer/client.js&rev=renderer')
+  })
+
+  it('does not pass through a document-relative plugin URL that escapes /plugins', async () => {
+    const inner = await upstream('batched-relative-invalid')
+    const directory = await mkdtemp(join(tmpdir(), 'dsh-mobile-invalid-layout-'))
+    cleanups.push(() => rm(directory, { recursive: true, force: true }))
+    const mobileLayoutFile = join(directory, 'mobile-layout.js')
+    await writeFile(mobileLayoutFile, 'globalThis.__dedicatedMobileLayout = true;\n', 'utf8')
+    const instance = await gateway(inner.port, { mobileLayoutFile })
+    const paired = await pair(instance)
+    const headers = {
+      ...browserHeaders(instance),
+      accept: 'text/html,application/xhtml+xml',
+      cookie: `${SESSION_COOKIE}=${paired.session}`,
+    }
+
+    const mobile = await request(instance.address().port, '/', { headers })
+    expect(mobile.status).toBe(200)
+    const path = /"url":"(\/mobile-access\/mobile-boot\/[a-f\d]{64}\.js)"/u.exec(mobile.body)?.[1]
+    expect(path).toBeDefined()
+    const batch = await request(instance.address().port, path!, { headers })
+    expect(batch.status).toBe(502)
+    expect(inner.observations.map(entry => entry.url)).not.toContain('/api/secret')
   })
 
   it('does not retry a deterministic bundle response and permits the next assembly to recover', async () => {

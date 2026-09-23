@@ -570,8 +570,7 @@ describe('stock DSH lifecycle', () => {
     expect(steeredMessage!.text).toContain('把手机端改成深色主题')
     // The guide rides as a plugin-source context injection, not a user bubble.
     expect(steeredMessage!.source).toMatchObject({
-      kind: 'plugin',
-      plugin: 'dsh-mobile',
+      kind: 'plugin:dsh-mobile',
       form: 'notice',
       summary: '/mobile 把手机端改成深色主题',
     })

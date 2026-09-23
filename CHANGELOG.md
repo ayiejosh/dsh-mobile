@@ -2,6 +2,13 @@
 
 Notable changes to DSH Mobile are recorded here. GitHub Releases remain the source for downloadable packages and complete generated commit notes.
 
+## Unreleased
+
+- Accept both absolute and document-relative DSH plugin URLs when probing and assembling the mobile startup batches. This fixes the `502 upstream_unavailable` boot failure after DSH 0.1.7 changed its client URL references; verified against DSH 0.1.7-alpha.2 on the local and remote gateways (thanks @azri57806-design for [#97](https://github.com/saya-ch/dsh-mobile/issues/97)).
+- Align development dependencies and optional peer ranges with DSH 0.1.7-alpha.2, and give `/mobile` guidance its producer-owned message source so it remains valid under the new DSH message types.
+- Guard WebSocket upgrade sockets before asynchronous authentication so a client disconnect during reconnect cannot emit an unhandled socket error (follow-up to [#95](https://github.com/saya-ch/dsh-mobile/issues/95)).
+- Show Retry and Device list actions when Android trusted-connection restoration takes too long, without discarding existing device credentials (thanks @sznyhgm for [#96](https://github.com/saya-ch/dsh-mobile/issues/96)).
+
 ## 0.4.4 - 2026-09-20
 
 - Keep DSH running if mDNS response callbacks, the multicast-dns emitter, or the already-bound UDP discovery socket reports a network error. LAN discovery records the degraded channel and logs the error code while the authenticated HTTP and WebSocket gateway remains available (thanks @KMGTPEZY for [#95](https://github.com/saya-ch/dsh-mobile/issues/95)).

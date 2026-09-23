@@ -301,6 +301,8 @@ The table below lists, for each plugin version, the DeepSeek Harness version it 
 
 On macOS, local network, self-hosted FRP, and the own reverse proxy work; the three managed components have no macOS build yet. The diagnostics firewall check currently covers Windows only and reports “not applicable” elsewhere.
 
+The unpublished local fix passed the DSH `0.1.7-alpha.2` compatibility check and gateway integration test; the published `0.4.4` remains verified against `0.1.6-alpha.2`.
+
 | DSH Mobile plugin | Verified DeepSeek Harness version |
 | --- | --- |
 | `0.4.4` | `0.1.6-alpha.2` (local source and renderer-v2 contract check) |

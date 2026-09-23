@@ -1,5 +1,14 @@
 import type { Context } from '@deepseek-ai/cordis'
 import { boundContextSummary, createUserMessage } from '@deepseek-ai/dsh-llm/message'
+declare module '@deepseek-ai/dsh-llm' {
+  interface MessageSourceMap {
+    'plugin:dsh-mobile': {
+      kind: 'plugin:dsh-mobile'
+      form: 'notice'
+      summary: string
+    }
+  }
+}
 // Side-effect type import: activates dsh-commands' Context augmentation so
 // `ctx.commands` and its handler types resolve without a runtime dependency.
 import type {} from '@deepseek-ai/dsh-commands'
@@ -1036,8 +1045,7 @@ export async function apply(ctx: Context, config: PluginConfig): Promise<void> {
         agent.steer(createUserMessage({
           content: [{ type: 'text', text: `${guide}\n\n用户需求：${task}` }],
           source: {
-            kind: 'plugin',
-            plugin: 'dsh-mobile',
+            kind: 'plugin:dsh-mobile',
             form: 'notice',
             summary: boundContextSummary(`/mobile ${task}`),
           },

@@ -121,6 +121,18 @@ const MOBILE_BOOT_SIZE_PROBE_HEADER = 'x-dsh-mobile-size-probe'
 const MAX_MOBILE_BOOT_BATCHES = 8
 const MOBILE_BOOT_UPSTREAM_ATTEMPTS = 4
 const MOBILE_BOOT_RETRY_DELAY_MS = 150
+
+function upstreamPluginBundleUrl(source: string, upstreamOrigin: URL): URL | undefined {
+  if ((!source.startsWith('/plugins/') && !source.startsWith('plugins/')) || source.includes('#')) return undefined
+  try {
+    const target = new URL(source, new URL('/', upstreamOrigin))
+    if (target.origin !== upstreamOrigin.origin || !target.pathname.startsWith('/plugins/')) return undefined
+    return target
+  } catch {
+    return undefined
+  }
+}
+
 const TRANSIENT_UPSTREAM_ERROR_CODES = new Set([
   'EAI_AGAIN',
   'ECONNABORTED',
@@ -2020,7 +2032,8 @@ export class MobileAccessGateway {
   ): Promise<{ sizes: Map<string, number>; passThrough: Set<string> }> {
     const sizes = new Map<string, number>()
     const passThrough = new Set<string>()
-    const candidates = planEntries.filter(entry => entry.id !== MOBILE_LAYOUT_MODULE && entry.url.startsWith('/plugins/'))
+    const candidates = planEntries.filter(entry => entry.id !== MOBILE_LAYOUT_MODULE
+      && upstreamPluginBundleUrl(entry.url, this.config.upstreamOrigin) !== undefined)
     let cursor = 0
     const worker = async (): Promise<void> => {
       while (cursor < candidates.length) {
@@ -2042,11 +2055,10 @@ export class MobileAccessGateway {
    * cached for a short window.
    */
   private async upstreamBundleSize(source: string): Promise<number | undefined> {
-    if (!source.startsWith('/plugins/') || source.includes('#')) return undefined
+    const target = upstreamPluginBundleUrl(source, this.config.upstreamOrigin)
+    if (target === undefined) return undefined
     const cached = this.bootEntrySizeCache.get(source)
     if (cached !== undefined && Date.now() - cached.at < MOBILE_BOOT_SIZE_CACHE_TTL_MS) return cached.size
-    const target = new URL(source, this.config.upstreamOrigin)
-    if (target.origin !== this.config.upstreamOrigin.origin) return undefined
     const upstreamCookie = await this.upstreamCookieHeader()
     let upstreamRequest: ClientRequest | undefined
     try {
@@ -2222,9 +2234,8 @@ export class MobileAccessGateway {
 
   private async readUpstreamClientBundle(source: string, signal: AbortSignal): Promise<Buffer> {
     signal.throwIfAborted()
-    if (!source.startsWith('/plugins/') || source.includes('#')) throw new HttpError(502, 'upstream_unavailable')
-    const target = new URL(source, this.config.upstreamOrigin)
-    if (target.origin !== this.config.upstreamOrigin.origin) throw new HttpError(502, 'upstream_unavailable')
+    const target = upstreamPluginBundleUrl(source, this.config.upstreamOrigin)
+    if (target === undefined) throw new HttpError(502, 'upstream_unavailable')
     let upstreamRequest: ClientRequest | undefined
     const aborted = (): void => { upstreamRequest?.destroy(new Error('request aborted')) }
     signal.addEventListener('abort', aborted, { once: true })

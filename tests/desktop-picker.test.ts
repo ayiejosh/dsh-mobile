@@ -136,10 +136,12 @@ describe('directory picker host composition', () => {
     })
   })
 
-  it('reproduces the reported duplicate service without the two Mobile conditions', async () => {
-    await withPickerHost(true, 'win32', async (_ctx, loader) => {
-      await expect(loader.root.update(compose(true, 'win32', false, true)))
-        .rejects.toThrow('service "directoryPicker" has been registered')
+  it('selects the wrong picker on Windows Desktop without the two Mobile conditions', async () => {
+    await withPickerHost(true, 'win32', async (ctx, loader, providers) => {
+      await loader.root.update(compose(true, 'win32', false, true))
+      await loader.await()
+      expect(ctx.get('directoryPicker')).toMatchObject({ owner: 'directory-picker-mobile-host' })
+      expect([...providers]).toEqual(['directory-picker-mobile-host'])
     })
   })
 })
