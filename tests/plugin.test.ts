@@ -661,6 +661,39 @@ describe('attach-mode control routes', () => {
     expect(badEntryTls.status).toBe(409)
     expect(badEntryTls.body).toContain('frp_entry_tls_invalid')
   })
+
+  it('exposes the self-signed certificate state and reachability on demand', async () => {
+    const mounted = await mount()
+    const configured = await invoke(mounted.route, 'POST', '/api/mobile-access/remote/frp/configure', JSON.stringify({
+      serverAddress: '127.0.0.1',
+      serverPort: 1,
+      token: '0123456789abcdef0123456789abcdef',
+      publicOrigin: 'https://8.8.8.8',
+      mode: 'attach',
+      entryTls: 'self-signed',
+      publicPort: 33_080,
+    }))
+    expect(configured.status).toBe(200)
+    expect(configured.body).not.toContain('0123456789abcdef0123456789abcdef')
+    const check = await invoke(mounted.route, 'GET', '/api/mobile-access/remote/frp/self-check')
+    expect(check.status).toBe(200)
+    const parsed = JSON.parse(check.body) as { frpSelfCheck: Record<string, unknown> }
+    expect(parsed.frpSelfCheck).toMatchObject({
+      mode: 'attach',
+      entryTls: 'self-signed',
+      publicPort: 33_080,
+      // Nothing is listening and the certificate does not exist until the channel
+      // starts: both facts are reported instead of throwing.
+      frpsReachable: false,
+      entryReachable: false,
+      inbound: { listenHost: '127.0.0.1', allowedCidrs: ['127.0.0.0/8'] },
+    })
+    expect((parsed.frpSelfCheck.certificate as Record<string, unknown>).state).toBe('unknown')
+    // Never leak the token, key material, or private paths through the self-check.
+    expect(check.body).not.toContain('0123456789abcdef0123456789abcdef')
+    expect(check.body).not.toContain('ca-key.pem')
+  })
+
   it('keeps the managed deploy routes untouched for the default mode', async () => {
     const mounted = await mount()
     const configured = await invoke(mounted.route, 'POST', '/api/mobile-access/remote/frp/configure', JSON.stringify({

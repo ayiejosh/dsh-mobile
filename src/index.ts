@@ -127,6 +127,8 @@ export {
 export { createFrpAttachPlan } from './frp-attach-plan.js'
 export type { FrpAttachOptions, FrpAttachTemplate, FrpAttachVpsParts } from './frp-attach.js'
 export type { FrpAttachPlan, FrpAttachPlanLocal, FrpAttachPlanStep, FrpAttachStepId } from './frp-attach-plan.js'
+export { CERT_EXPIRING_DAYS, evaluateCertificateLifetime, probeOriginCertificate, readCertificateRenewal } from './cert-renewal.js'
+export type { CertRenewalStatus } from './cert-renewal.js'
 export { ensureFrpIngressCertificate, frpIngressPaths, frpIngressSelfCheck } from './frp-ingress.js'
 export type { FrpIngressCertificate, FrpIngressPaths, FrpIngressSelfCheck } from './frp-ingress.js'
 export { issueServerCertificate } from './managed-setup.js'

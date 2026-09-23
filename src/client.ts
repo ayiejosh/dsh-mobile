@@ -911,6 +911,8 @@ function installControl(): { remove: () => void; toggle: () => void; isOpen: () 
   const frpStep2Text = element('p'); frpStep2Text.textContent = t('frpStep2Text')
   const frpCopyTemplate = element('button', 'dsh-mobile-control__secondary dsh-mobile-control__frp-action'); frpCopyTemplate.type = 'button'; frpCopyTemplate.textContent = t('copyServerTemplate')
   const frpCopyAttachPlan = element('button', 'dsh-mobile-control__secondary dsh-mobile-control__frp-action'); frpCopyAttachPlan.type = 'button'; frpCopyAttachPlan.textContent = t('frpAttachPlan'); frpCopyAttachPlan.hidden = true
+  const frpSelfCheckButton = element('button', 'dsh-mobile-control__secondary dsh-mobile-control__frp-action'); frpSelfCheckButton.type = 'button'; frpSelfCheckButton.textContent = t('frpAttachSelfCheck'); frpSelfCheckButton.hidden = true
+  const frpSelfCheckStatus = element('p', 'dsh-mobile-control__component-status'); frpSelfCheckStatus.textContent = ''; frpSelfCheckStatus.hidden = true
   const vpsDeployText = element('p'); vpsDeployText.textContent = t('vpsDeployText')
   const vpsChangesTitle = element('p'); vpsChangesTitle.textContent = t('vpsDeployChangesTitle')
   const vpsChanges = element('ul', 'dsh-mobile-control__frp-changes')
@@ -930,7 +932,7 @@ function installControl(): { remove: () => void; toggle: () => void; isOpen: () 
   const vpsDeployStatus = element('p', 'dsh-mobile-control__component-status'); vpsDeployStatus.textContent = ''
   const vpsCopyUninstall = element('button', 'dsh-mobile-control__secondary dsh-mobile-control__frp-action'); vpsCopyUninstall.type = 'button'; vpsCopyUninstall.textContent = t('vpsCopyUninstall')
   const vpsUninstall = element('button', 'dsh-mobile-control__danger dsh-mobile-control__frp-action'); vpsUninstall.type = 'button'; vpsUninstall.textContent = t('vpsUninstall')
-  frpStep2.append(frpStep2Title, frpStep2Text, frpCopyTemplate, frpCopyAttachPlan, vpsDeployText, vpsChangesTitle, vpsChanges, vpsDeployFields, vpsDeploy, vpsDeployStatus, vpsCopyUninstall, vpsUninstall)
+  frpStep2.append(frpStep2Title, frpStep2Text, frpCopyTemplate, frpCopyAttachPlan, frpSelfCheckButton, frpSelfCheckStatus, vpsDeployText, vpsChangesTitle, vpsChanges, vpsDeployFields, vpsDeploy, vpsDeployStatus, vpsCopyUninstall, vpsUninstall)
   const frpStep3 = element('section', 'dsh-mobile-control__frp-step')
   const frpStep3Title = element('strong'); frpStep3Title.textContent = t('frpStep3Title')
   const frpStep3Text = element('p'); frpStep3Text.textContent = t('frpStep3Text')
@@ -1666,6 +1668,7 @@ function installControl(): { remove: () => void; toggle: () => void; isOpen: () 
     const selfSignedSelected = attachSelected && frpEntryTls.value === 'self-signed'
     frpCopyTemplate.hidden = attachSelected
     frpCopyAttachPlan.hidden = !attachSelected
+    frpSelfCheckButton.hidden = !frpConfigured
     frpVhostPort.disabled = selfSignedSelected
     frpVhostLabel.hidden = selfSignedSelected
     frpPublicPortLabel.hidden = !selfSignedSelected
@@ -2098,6 +2101,38 @@ function installControl(): { remove: () => void; toggle: () => void; isOpen: () 
       }, error => { remoteStatus.textContent = frpAttachErrorText(String(error)); return undefined })
       .catch(error => { remoteStatus.textContent = t('frpAttachPlanFailed', { error: String(error) }) })
       .finally(() => { remoteProviderBusy = false; frpCopyAttachPlan.disabled = false })
+  })
+  const certificateStatusText = (status: Record<string, unknown> | undefined): string => {
+    if (status === undefined) return ''
+    const state = typeof status.state === 'string' ? status.state : 'unknown'
+    const days = typeof status.daysRemaining === 'number' ? String(status.daysRemaining) : '0'
+    if (state === 'ok') return t('frpAttachCertOk', { days })
+    if (state === 'expiring') return t('frpAttachCertExpiring', { days })
+    if (state === 'expired') return t('frpAttachCertExpired')
+    return t('frpAttachCertUnknown')
+  }
+  frpSelfCheckButton.addEventListener('click', () => {
+    if (remoteProviderBusy) return
+    remoteProviderBusy = true
+    frpSelfCheckButton.disabled = true
+    frpSelfCheckStatus.hidden = false
+    frpSelfCheckStatus.textContent = t('loadingStatus')
+    void controlRequestJson('/api/mobile-access/remote/frp/self-check')
+      .then(data => {
+        const check = data.frpSelfCheck !== null && typeof data.frpSelfCheck === 'object'
+          ? data.frpSelfCheck as Record<string, unknown> : {}
+        const lines: string[] = []
+        const certificate = check.certificate !== null && typeof check.certificate === 'object'
+          ? check.certificate as Record<string, unknown> : undefined
+        const certificateText = certificateStatusText(certificate)
+        if (certificateText !== '') lines.push(certificateText)
+        lines.push(check.frpsReachable === true ? t('frpAttachFrpsReachable') : t('frpAttachFrpsUnreachable'))
+        if (check.entryTls === 'self-signed') {
+          lines.push(check.entryReachable === true ? t('frpAttachEntryReachable') : t('frpAttachEntryUnreachable'))
+        }
+        frpSelfCheckStatus.textContent = lines.join(' · ')
+      }, error => { frpSelfCheckStatus.textContent = t('requestFailed', { error: String(error) }) })
+      .finally(() => { remoteProviderBusy = false; frpSelfCheckButton.disabled = false })
   })
   const validVpsSshUser = (value: string): boolean => /^[a-z_][a-z0-9_.-]*[$]?$/iu.test(value) && value.length <= 64
   const validVpsSshKey = (value: string): boolean => value === '' || (/^[a-zA-Z]:[\\/]/u.test(value) || value.startsWith('/'))

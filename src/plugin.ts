@@ -80,7 +80,7 @@ import {
   type RemoteProviderController,
   type RemoteProviderStatus,
 } from './remote.js'
-import { parseAuthority, parseCidr } from './network.js'
+import { parseAuthority, parseCidr, probeTcpReachable } from './network.js'
 import {
   availableLanNetworks,
   isNetworkSelectionError,
@@ -965,6 +965,31 @@ export async function apply(ctx: Context, config: PluginConfig): Promise<void> {
             ...remotePayload(),
             frpAttachPlan: createFrpAttachPlan(settings, options),
             frpAttachTemplate: createFrpAttachTemplate(settings, options),
+          }, false)
+          return
+        }
+        if (request.method === 'GET' && target.decodedPathname === `${LOCAL_ADMIN_PREFIX}/remote/frp/self-check`) {
+          const settings = frpConfig.settings()
+          if (settings === undefined) throw new HttpError(409, 'frp_config_missing')
+          const check = await frpIngressSelfCheck(settings, remoteDeviceFile)
+          // Two independent facts: the control port proves the user's frps is up,
+          // and the entry port proves the tunnel actually forwards to this
+          // computer. Both are advisory and never gate a security decision.
+          const [frpsReachable, entryReachable] = await Promise.all([
+            probeTcpReachable(settings.serverAddress, settings.serverPort),
+            probeTcpReachable(settings.serverAddress, resolveFrpPublicPort(settings)),
+          ])
+          sendJson(response, 200, {
+            ...remotePayload(),
+            frpSelfCheck: {
+              ...check,
+              // Only stable booleans and the CA fingerprint leave this route: no
+              // token, no key material, and no private file paths.
+              frpsReachable,
+              entryReachable,
+              frpc: remoteController().status(),
+              component: frpComponent.status(),
+            },
           }, false)
           return
         }

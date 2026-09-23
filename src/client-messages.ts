@@ -123,6 +123,8 @@ export const LOCALIZED_DIAGNOSTIC_COPY = {
     remoteOk: 'The remote public address passed the reachability check.', remoteWarning: 'The remote channel needs attention or is still connecting.', remoteError: 'The remote connection is not currently reachable.', remoteInfo: 'Remote access is currently off.', remoteAction: 'Return to Remote access, follow the provider guidance, and reconnect.',
     phone: 'The computer cannot determine whether the router isolates the phone.', phoneAction: 'Confirm the phone and computer use the same network, then disable guest-network or AP isolation.',
     reportTitle: 'DSH Mobile diagnostic report', generated: 'Generated',
+    certificateOk: 'The FRP entry certificate is valid.', certificateExpiring: 'The FRP entry certificate expires soon.', certificateExpired: 'The FRP entry certificate has expired.', certificateUnknown: 'The FRP entry certificate could not be read.',
+    certificateAction: 'Reconnect the FRP channel to re-issue the certificate, or follow the attach runbook on the VPS.',
   },
   it: {
     versions: 'Sono indicate le versioni installate di plugin e DSH e la versione minima dell’app Android.',
@@ -132,6 +134,8 @@ export const LOCALIZED_DIAGNOSTIC_COPY = {
     remoteOk: 'L’indirizzo pubblico remoto ha superato il test di raggiungibilità.', remoteWarning: 'Il canale remoto richiede attenzione o è ancora in connessione.', remoteError: 'La connessione remota non è al momento raggiungibile.', remoteInfo: 'L’accesso remoto è disattivato.', remoteAction: 'Torna ad Accesso remoto, segui le indicazioni del provider e riconnettiti.',
     phone: 'Il computer non può stabilire se il router isola il telefono.', phoneAction: 'Verifica che telefono e computer usino la stessa rete, poi disattiva rete ospiti o isolamento AP.',
     reportTitle: 'Report diagnostico DSH Mobile', generated: 'Generato',
+    certificateOk: 'Il certificato di ingresso FRP è valido.', certificateExpiring: 'Il certificato di ingresso FRP scade a breve.', certificateExpired: 'Il certificato di ingresso FRP è scaduto.', certificateUnknown: 'Impossibile leggere il certificato di ingresso FRP.',
+    certificateAction: 'Riconnetti il canale FRP per rigenerare il certificato, oppure segui il runbook attach sul VPS.',
   },
   zh: {
     versions: '已显示插件、DSH 和 Android App 最低版本。',
@@ -141,6 +145,8 @@ export const LOCALIZED_DIAGNOSTIC_COPY = {
     remoteOk: '远程公网地址已通过可达性检查。', remoteWarning: '远程通道需要处理或仍在连接。', remoteError: '远程连接当前不可达。', remoteInfo: '远程访问当前未开启。', remoteAction: '返回远程访问，按提供方提示操作并重新连接。',
     phone: '电脑无法判断路由器是否隔离了手机。', phoneAction: '确认手机与电脑使用同一网络，并关闭访客网络或 AP 隔离。',
     reportTitle: 'DSH Mobile 诊断报告', generated: '生成时间',
+    certificateOk: 'FRP 入口证书有效。', certificateExpiring: 'FRP 入口证书即将过期。', certificateExpired: 'FRP 入口证书已过期。', certificateUnknown: '无法读取 FRP 入口证书。',
+    certificateAction: '重新连接 FRP 通道即可重新签发证书，或按接入清单在 VPS 侧处理。',
   },
 } satisfies Record<MobileControlLocale, {
   versions: string
@@ -164,6 +170,11 @@ export const LOCALIZED_DIAGNOSTIC_COPY = {
   phoneAction: string
   reportTitle: string
   generated: string
+  certificateOk: string
+  certificateExpiring: string
+  certificateExpired: string
+  certificateUnknown: string
+  certificateAction: string
 }>
 
 Object.assign(MOBILE_CONTROL_MESSAGES.en, {
@@ -579,6 +590,8 @@ Object.assign(MOBILE_CONTROL_MESSAGES.en, {
   frpVhostHttpPort: 'frps vhostHTTPPort', frpVhostHttpPortHint: 'The loopback plaintext vhost port of your own frps (upstream default 7080).',
   frpPublicPort: 'Public entry port', frpPublicPortHint: 'Raw TCP proxy port used as the public HTTPS entry (default 33080, never 3080/3443/3444).',
   frpAttachPlan: 'Copy attach runbook', frpAttachPlanCopied: 'Attach runbook copied: local frpc.toml plus the VPS checklist.', frpAttachPlanFailed: 'Could not build the attach runbook: {error}',
+  frpAttachCertOk: 'Ingress certificate valid for {days} more days (self-signed, no renewal needed).', frpAttachCertExpiring: 'Ingress certificate expires in {days} days; reconnect to re-issue it.', frpAttachCertExpired: 'Ingress certificate has expired; reconnect to re-issue it.', frpAttachCertUnknown: 'Ingress certificate is missing or unreadable; reconnect to issue it.',
+  frpAttachSelfCheck: 'Run self-check', frpAttachFrpsReachable: 'frps control port reachable', frpAttachFrpsUnreachable: 'frps control port unreachable', frpAttachEntryReachable: 'public entry reachable', frpAttachEntryUnreachable: 'public entry unreachable',
   frpAttachModeRequiresVhostPort: 'Attach mode needs the real vhostHTTPPort of your frps; the plugin will not guess 7080.', frpAttachCertUnknownError: 'The self-signed ingress certificate is unknown; reconnect to re-issue it.', frpEntryTlsInvalid: 'This entry certificate mode cannot be provisioned with the selected mode.',
   frpAttachStepWriteSnippet: 'Create the Caddy snippet', frpAttachStepAddImport: 'Add the import line and reload Caddy', frpAttachStepIssueCert: 'Issue the public-IP certificate', frpAttachStepCertTimer: 'Confirm the renewal timer', frpAttachStepVerifyHttps: 'Verify the public HTTPS entry',
   frpAttachStepOpenPort: 'Open the public entry port', frpAttachStepVerifyFrps: 'Confirm your frps is ready', frpAttachStepVerifyEntry: 'Verify the tunnel end to end',
@@ -590,6 +603,8 @@ Object.assign(MOBILE_CONTROL_MESSAGES.it, {
   frpVhostHttpPort: 'vhostHTTPPort di frps', frpVhostHttpPortHint: 'Porta vhost in chiaro su loopback del tuo frps (predefinita 7080).',
   frpPublicPort: 'Porta pubblica di ingresso', frpPublicPortHint: 'Porta del proxy TCP grezzo usata come ingresso HTTPS pubblico (predefinita 33080, mai 3080/3443/3444).',
   frpAttachPlan: 'Copia il runbook attach', frpAttachPlanCopied: 'Runbook attach copiato: frpc.toml locale più la checklist VPS.', frpAttachPlanFailed: 'Impossibile creare il runbook attach: {error}',
+  frpAttachCertOk: 'Certificato di ingresso valido per altri {days} giorni (autofirmato, nessun rinnovo).', frpAttachCertExpiring: 'Il certificato di ingresso scade tra {days} giorni; riconnettiti per rigenerarlo.', frpAttachCertExpired: 'Il certificato di ingresso è scaduto; riconnettiti per rigenerarlo.', frpAttachCertUnknown: 'Certificato di ingresso mancante o illeggibile; riconnettiti per generarlo.',
+  frpAttachSelfCheck: 'Esegui autoverifica', frpAttachFrpsReachable: 'porta di controllo frps raggiungibile', frpAttachFrpsUnreachable: 'porta di controllo frps non raggiungibile', frpAttachEntryReachable: 'ingresso pubblico raggiungibile', frpAttachEntryUnreachable: 'ingresso pubblico non raggiungibile',
   frpAttachModeRequiresVhostPort: 'La modalità attach richiede il vhostHTTPPort reale del tuo frps; il plugin non presume 7080.', frpAttachCertUnknownError: 'Il certificato di ingresso autofirmato è sconosciuto; riconnettiti per rigenerarlo.', frpEntryTlsInvalid: 'Questa modalità di certificato non è compatibile con la modalità selezionata.',
   frpAttachStepWriteSnippet: 'Crea lo snippet Caddy', frpAttachStepAddImport: 'Aggiungi la riga import e ricarica Caddy', frpAttachStepIssueCert: 'Emetti il certificato per l’IP pubblico', frpAttachStepCertTimer: 'Verifica il timer di rinnovo', frpAttachStepVerifyHttps: 'Verifica l’ingresso HTTPS pubblico',
   frpAttachStepOpenPort: 'Apri la porta pubblica di ingresso', frpAttachStepVerifyFrps: 'Verifica che il tuo frps sia pronto', frpAttachStepVerifyEntry: 'Verifica il tunnel end-to-end',
@@ -601,6 +616,8 @@ Object.assign(MOBILE_CONTROL_MESSAGES.zh, {
   frpVhostHttpPort: 'frps 的 vhostHTTPPort', frpVhostHttpPortHint: '你自己 frps 的回环明文 vhost 端口（上游默认 7080）。',
   frpPublicPort: '公网入口端口', frpPublicPortHint: '作为公网 HTTPS 入口的 TCP 透传端口（默认 33080，不得为 3080/3443/3444）。',
   frpAttachPlan: '复制接入清单', frpAttachPlanCopied: '接入清单已复制：本机 frpc.toml 与 VPS 侧待办。', frpAttachPlanFailed: '生成接入清单失败：{error}',
+  frpAttachCertOk: '入口证书还有 {days} 天有效期（自签，无需续期）。', frpAttachCertExpiring: '入口证书 {days} 天后到期，重新连接即可自动重签。', frpAttachCertExpired: '入口证书已过期，重新连接即可自动重签。', frpAttachCertUnknown: '入口证书缺失或不可读，重新连接即可签发。',
+  frpAttachSelfCheck: '运行自检', frpAttachFrpsReachable: 'frps 控制端口可达', frpAttachFrpsUnreachable: 'frps 控制端口不可达', frpAttachEntryReachable: '公网入口可达', frpAttachEntryUnreachable: '公网入口不可达',
   frpAttachModeRequiresVhostPort: '接入模式必须填写你 frps 真实的 vhostHTTPPort，插件不会替你假定 7080。', frpAttachCertUnknownError: '自签入口证书状态未知，重新连接即可重新签发。', frpEntryTlsInvalid: '当前置备方式无法使用该入口证书档。',
   frpAttachStepWriteSnippet: '新增 Caddy 片段', frpAttachStepAddImport: '加入 import 行并重载 Caddy', frpAttachStepIssueCert: '为公网 IP 签发证书', frpAttachStepCertTimer: '确认续期定时器', frpAttachStepVerifyHttps: '验证公网 HTTPS 入口',
   frpAttachStepOpenPort: '放行公网入口端口', frpAttachStepVerifyFrps: '确认既有 frps 已就绪', frpAttachStepVerifyEntry: '端到端验证隧道',
