@@ -84,6 +84,9 @@ async function startEntryServer(options: {
   readonly status?: number
   /** Answer with this body instead of the discovery advertisement. */
   readonly body?: string
+  /** Send a partial 200 response and keep its body open. */
+  readonly stallAfterHeaders?: boolean
+  readonly onPartialResponse?: () => void
 }): Promise<EntryServer> {
   const host = options.host ?? '127.0.0.1'
   const sockets = new Set<Socket>()
@@ -102,6 +105,11 @@ async function startEntryServer(options: {
       'content-type': 'application/json',
       'content-length': Buffer.byteLength(body),
     })
+    if (options.stallAfterHeaders === true) {
+      response.write(body.slice(0, 1))
+      options.onPartialResponse?.()
+      return
+    }
     response.end(body)
   })
   server.on('connection', socket => {
@@ -241,9 +249,43 @@ describe('FRP discovery probe against a real HTTPS entry', () => {
     expect(elapsed).toBeLessThan(8_000)
   }, 15_000)
 
-  it('treats a non-2xx answer as "not ready yet" rather than a fault', async () => {
-    // `!response.ok` semantics are unchanged: a redirect or an error page from the
-    // entry keeps the retry loop running instead of ending the generation.
+  it('times out when a 200 response stalls after its headers and first body byte', async () => {
+    const chain = createTestTlsChain()
+    const entry = await startEntryServer({ chain, stallAfterHeaders: true })
+    const started = Date.now()
+    await expect(defaultProbeDiscovery(
+      { origin: entry.origin, trustAnchorPem: chain.rootCert },
+      CA_ADVERTISED_IDENTITY,
+      new AbortController().signal,
+    )).rejects.toThrow('frp_discovery_timeout')
+    const elapsed = Date.now() - started
+    expect(elapsed).toBeGreaterThanOrEqual(4_000)
+    expect(elapsed).toBeLessThan(8_000)
+  }, 15_000)
+
+  it('aborts a partial discovery body without waiting for the request timeout', async () => {
+    const chain = createTestTlsChain()
+    let partialResponseReceived!: () => void
+    const partialResponse = new Promise<void>(resolve => { partialResponseReceived = resolve })
+    const entry = await startEntryServer({
+      chain,
+      stallAfterHeaders: true,
+      onPartialResponse: partialResponseReceived,
+    })
+    const controller = new AbortController()
+    const probe = defaultProbeDiscovery(
+      { origin: entry.origin, trustAnchorPem: chain.rootCert },
+      CA_ADVERTISED_IDENTITY,
+      controller.signal,
+    )
+    await partialResponse
+    controller.abort()
+    await expect(probe).rejects.toThrow('frp_discovery_aborted')
+  })
+
+  it('treats a non-200 answer as "not ready yet" rather than a fault', async () => {
+    // A redirect or an error page from the entry keeps the retry loop running
+    // instead of ending the generation.
     const chain = createTestTlsChain()
     const entry = await startEntryServer({ chain, status: 302 })
     await expect(defaultProbeDiscovery(
@@ -251,6 +293,28 @@ describe('FRP discovery probe against a real HTTPS entry', () => {
       CA_ADVERTISED_IDENTITY,
       new AbortController().signal,
     )).resolves.toBe(false)
+  })
+
+  it('treats a bodyless 204 as not ready instead of constructing an invalid Response', async () => {
+    const chain = createTestTlsChain()
+    const entry = await startEntryServer({ chain, status: 204 })
+    await expect(defaultProbeDiscovery(
+      { origin: entry.origin, trustAnchorPem: chain.rootCert },
+      CA_ADVERTISED_IDENTITY,
+      new AbortController().signal,
+    )).resolves.toBe(false)
+  })
+
+  it('discards a stalled error response without holding the retry loop', async () => {
+    const chain = createTestTlsChain()
+    const entry = await startEntryServer({ chain, status: 503, stallAfterHeaders: true })
+    const started = Date.now()
+    await expect(defaultProbeDiscovery(
+      { origin: entry.origin, trustAnchorPem: chain.rootCert },
+      CA_ADVERTISED_IDENTITY,
+      new AbortController().signal,
+    )).resolves.toBe(false)
+    expect(Date.now() - started).toBeLessThan(2_000)
   })
 
   it('keeps the 16 KiB response cap', async () => {

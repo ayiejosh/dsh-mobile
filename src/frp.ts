@@ -205,17 +205,18 @@ function discoveryResponse(message: IncomingMessage): Response {
  * the verified name stays the host of the origin, which is the name the app
  * dials as well (Node matches IP literals against `IP Address:` SANs).
  *
- * A non-2xx answer resolves `undefined` (retry, exactly like `!response.ok`);
+ * A non-200 answer resolves `undefined` for retry; discovery requires a body.
  * transport, TLS, and timeout failures reject so the caller keeps retrying.
+ * The request stays cancellable until the bounded response body has completed.
  */
 function requestDiscovery(
   target: FrpDiscoveryProbeTarget,
   signal: AbortSignal,
-): Promise<Response | undefined> {
+): Promise<Uint8Array | undefined> {
   if (signal.aborted) return Promise.reject(new Error('frp_discovery_aborted'))
   const url = new URL(`${target.origin}/mobile-access/discovery`)
   if (url.protocol !== 'https:' || url.hostname === '') return Promise.reject(new Error('frp_discovery_invalid'))
-  return new Promise<Response | undefined>((resolveRequest, rejectRequest) => {
+  return new Promise<Uint8Array | undefined>((resolveRequest, rejectRequest) => {
     let settled = false
     let request: ClientRequest | undefined
     const release = (): void => {
@@ -229,9 +230,10 @@ function requestDiscovery(
       request?.destroy()
       rejectRequest(error)
     }
-    const succeed = (value: Response | undefined): void => {
+    const succeed = (value: Uint8Array | undefined): void => {
       if (settled) return
       settled = true
+      release()
       resolveRequest(value)
     }
     const onAbort = (): void => { fail(new Error('frp_discovery_aborted')) }
@@ -255,14 +257,13 @@ function requestDiscovery(
       // handshake decide the state of a new generation.
       agent: false,
     }, message => {
-      message.once('close', release)
       const status = message.statusCode ?? 0
-      if (status < 200 || status > 299) {
-        message.resume()
+      if (status !== 200) {
         succeed(undefined)
+        message.destroy()
         return
       }
-      succeed(discoveryResponse(message))
+      void boundedResponseBytes(discoveryResponse(message)).then(succeed, fail)
     })
     request.once('error', error => {
       fail(error instanceof Error ? error : new Error('frp_discovery_request_failed'))
@@ -284,11 +285,10 @@ export async function defaultProbeDiscovery(
   expectedInstanceId: string,
   signal: AbortSignal,
 ): Promise<boolean> {
-  const response = await requestDiscovery(target, signal)
-  if (response === undefined) return false
-  // The byte cap and any transport failure surface before parsing: an oversized
-  // body is an invalid advertisement, a broken body read is a retryable fault.
-  const bytes = await boundedResponseBytes(response)
+  // The byte cap, transport faults, and timeout all cover the complete body;
+  // a peer that sends only headers cannot leave the controller connecting forever.
+  const bytes = await requestDiscovery(target, signal)
+  if (bytes === undefined) return false
   let value: unknown
   try { value = JSON.parse(new TextDecoder().decode(bytes)) as unknown } catch {
     throw new Error('frp_discovery_invalid')
