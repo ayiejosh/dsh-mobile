@@ -187,6 +187,20 @@ class MobileLayoutController {
 
   readonly getSnapshot = (): LayoutSnapshot => this.snapshot
 
+  /**
+   * The panel store on the layout service itself (`ctx.layout.panelInfo`),
+   * mirroring the official LayoutController of DSH 0.1.7-rc.2+. The root hook
+   * wired in `apply` feeds `usePanelInfo` rendering; rc.2 client plugins read
+   * this service member directly. Without it `dsh-client-ui-plugin-manager`
+   * fails activation on the dedicated mobile frontend ("web boot: 1 entry did
+   * not activate") and `dsh-client-ui-open-in-app` throws the first time its
+   * shortcut target runs.
+   */
+  readonly panelInfo = {
+    getSnapshot: (): PanelInfoSnapshot => this.getSnapshot().panelInfo,
+    subscribe: (listener: () => void): (() => void) => this.subscribe(listener),
+  }
+
   toggleSidebar(): void {
     this.update({ sidebarOpen: !this.snapshot.sidebarOpen })
   }
