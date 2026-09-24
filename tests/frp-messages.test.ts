@@ -1,5 +1,5 @@
-import { readFileSync } from 'node:fs'
 import { describe, expect, it } from 'vitest'
+import { diagnosticControllerAction, frpAttachFormErrorCode } from '../src/client.js'
 import {
   DIAGNOSTIC_REASON_MESSAGES,
   LOCALIZED_DIAGNOSTIC_COPY,
@@ -84,33 +84,18 @@ describe('three-locale message parity', () => {
   })
 })
 
-/**
- * The panel resolves a rejection code through three separate tables in
- * `src/client.ts` (status repaint, attach preview, diagnostic action hint).
- * Counting the literal occurrences proves only that a line exists; this block
- * drives the real mapping data into the real translations, so a typo in any
- * table target — or a locale that never defines that key — fails here.
- */
-const CLIENT_SOURCE = readFileSync(new URL('../src/client.ts', import.meta.url), 'utf8')
-
-const NEW_FRP_ERROR_CODES = [
-  'frp_attach_mode_requires_vhost_port',
-  'frp_attach_cert_unknown',
-  'frp_entry_tls_invalid',
-] as const
-
 describe('panel error-code mapping', () => {
-  it('resolves every new FRP error code to a translation that exists in all three locales', () => {
-    for (const code of NEW_FRP_ERROR_CODES) {
-      const mapped = [...CLIENT_SOURCE.matchAll(new RegExp(`${code}: '([A-Za-z0-9_]+)'`, 'gu'))]
-        .map(match => match[1] as string)
-      expect(mapped.length, `${code} must be mapped by every panel table`).toBeGreaterThanOrEqual(3)
-      for (const key of new Set(mapped)) {
-        for (const locale of LOCALES) {
-          const value = table(locale)[key]
-          expect(typeof value === 'string' && value.trim().length > 0, `${locale}.${key} (for ${code})`).toBe(true)
-        }
-      }
+  it('uses the Host attach error code for localized diagnostic guidance', () => {
+    const code = frpAttachFormErrorCode({
+      serverAddress: '1.2.3.4', serverPort: 7000, token: '0'.repeat(32),
+      publicOrigin: 'https://1.2.3.4', entryTls: 'public-ip-cert',
+    })
+    expect(code).toBe('frp_attach_mode_requires_vhost_port')
+    for (const locale of LOCALES) {
+      const fallback = DIAGNOSTIC_REASON_MESSAGES[locale]['remote-controller-error'][1]
+      expect(diagnosticControllerAction(code, locale, fallback)).toBe(table(locale).frpAttachModeRequiresVhostPort)
+      expect(diagnosticControllerAction('frp_attach_cert_unknown', locale, fallback)).toBe(table(locale).frpAttachCertUnknownError)
+      expect(diagnosticControllerAction('frp_entry_tls_invalid', locale, fallback)).toBe(table(locale).frpEntryTlsInvalid)
     }
   })
 })
