@@ -2,7 +2,7 @@
 
 [中文指南](SELF_HOSTED_FRP.md)
 
-This page covers the released managed deployment, in which the plugin installs frps and Caddy. Attaching to an frps you already operate is part of the **unreleased 0.4.6 candidate**; the published 0.4.5 plugin and app do not contain that entry. See the [candidate attachment guide](ATTACH_EXISTING_FRPS.en.md).
+This page covers managed deployment, in which the plugin installs frps and Caddy. If your VPS already runs frps, version 0.4.6 can attach to it directly; see the [attachment guide](ATTACH_EXISTING_FRPS.en.md).
 
 Self-hosted FRP is for users who already operate a VPS and want to avoid the bandwidth limits of public tunnels. The phone reaches Caddy on the VPS over HTTPS, crosses the encrypted FRP tunnel, and then reaches DSH on the computer. FRP only transports the request; DSH pairing is still required.
 
@@ -20,7 +20,7 @@ Android app
 - **Domain mode**: use your own public domain; Caddy obtains and renews the certificate automatically.
 - **Public IPv4 mode**: use the VPS public IPv4 address directly. The plugin uses Certbot to request a roughly six-day Let's Encrypt IP certificate and installs a daily renewal timer. Documentation ranges such as `203.0.113.10`, private addresses, and other reserved addresses are rejected; enter a real routable public IP.
 
-The publicly trusted entry in this guide requires Android app 0.3.3 or later for custom remote origins. The 0.4.6 candidate's self-signed passthrough requires the 0.4.6 app with remote CA pinning; the published 0.4.5 app and earlier builds cannot use that entry. Older supported apps continue to work with LAN, cpolar, and Tailscale.
+The publicly trusted entry in this guide requires Android app 0.3.3 or later for custom remote origins. Self-signed passthrough requires the 0.4.6 app with remote CA pinning; older apps cannot use that entry and continue to work with LAN, cpolar, and Tailscale.
 
 ## Manual deployment vs automatic deployment
 

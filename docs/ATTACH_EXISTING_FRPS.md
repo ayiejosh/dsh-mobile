@@ -1,6 +1,6 @@
 # 接入你既有的 frps（插件不自动改动服务器）
 
-> **0.4.6 候选版，尚未发布**：本指南对应尚未发布到 npm 和 APK 的源码；线上 0.4.5 插件和 App 均不提供此入口。自签档必须使用 0.4.6 Android App，0.4.5 及更早 App 不支持。
+> **需要 0.4.6 插件**；自签档还必须使用 0.4.6 Android App。Android App 0.3.3–0.4.5 可使用公开证书档，但不支持自签档。
 
 本文面向**已经在一台公网 VPS 上跑着 frps**的用户。插件不会安装、修改或重启你的 frps，也不会自动改动 Caddyfile；若选择公开 CA 档，你需要自行新增 Caddy 片段和 `import`。本机侧不改动 DSH 自身配置。接入前须核对既有 frps 的监听；若它不满足所选入口档的要求，插件不会代你修改。
 
@@ -23,13 +23,13 @@
 - 公网入口：`443`，由 **VPS 上的 Caddy** 终止 TLS，它再反代到 `127.0.0.1:<vhostHTTPPort>`。
 - 证书：域名入口由 Caddy 自动申请与续期；公网 IPv4 入口使用 Certbot 5.8.0 的 `--standalone --preferred-profile shortlived --ip-address` 签发 [Let's Encrypt 的约 6 天 IP 证书](https://letsencrypt.org/2026/03/11/shorter-certs-certbot)。此 attach 流程**不会**安装续期定时器或部署 hook；你须在到期前续签、将新证书安装到 Caddy 并重载它。
 - 受信任的公开证书可供手机浏览器与支持自定义远程 Origin 的 Android App（0.3.3 及更新）使用；仍须完成设备配对。
-- VPS 侧要做：手动新增 Caddy 片段（`/etc/caddy/dsh-mobile-dsh.caddy`）和 Caddyfile 顶部一行 `import`；公网 IPv4 还需安排证书初次签发与持续续期。当前清单的 Certbot `--standalone` 命令会短暂停止 Caddy 以占用 80 端口，可能中断同机原有网站；请安排维护窗口。若不能接受中断，优先选域名公开证书档，或在可安装 0.4.6 App 后选自签 TCP 档。
+- VPS 侧要做：手动新增 Caddy 片段（`/etc/caddy/dsh-mobile-dsh.caddy`）和 Caddyfile 顶部一行 `import`；公网 IPv4 还需安排证书初次签发与持续续期。当前清单的 Certbot `--standalone` 命令会短暂停止 Caddy 以占用 80 端口，可能中断同机原有网站；请安排维护窗口。若不能接受中断，优先选域名公开证书档，或使用 0.4.6 App 的自签 TCP 档。
 
 ### B. 自签穿透档（`self-signed`）——**不需要公开证书**
 
 - 公网入口：`publicPort`（缺省 **33080**，可改；不得为 3080/3443/3444）。frps 只做**纯 TCP 透传，不解密**。
 - TLS 由**运行 DSH 的电脑上的网关终止**，当前仅使用公网 IPv4 入口。插件自签 CA 有效期 5 年，公网 IPv4 叶证书有效期 397 天；叶证书可在保留同一 CA 时续签，CA 到期会阻止连接，不能静默换成新 CA。应留意面板证书状态，CA 到期或更换后须重新配对。
-- 此档需要 **0.4.6 Android App**：二维码、链接和 App 配对密钥以 `dsh2` 标记必须固定 CA；App 会从网关的 `GET /mobile-access/ca.cer` 读取 CA，并核对密钥中的指纹，若接口返回 404 也不会降级为系统信任。已发布的 0.4.5 及更早 App 不支持此档，仍可使用 A 档。
+- 此档需要 **0.4.6 Android App**：二维码、链接和 App 配对密钥以 `dsh2` 标记必须固定 CA；App 会从网关的 `GET /mobile-access/ca.cer` 读取 CA，并核对密钥中的指纹，若接口返回 404 也不会降级为系统信任。旧版 App 不支持此档，仍可使用 A 档。
 - 手机**浏览器**访问会提示证书不受信任（这是自签的必然结果），请用 App 扫码配对使用。
 - VPS 不需要为此入口配置 Caddy、certbot 或新的 HTTP vhost；但既有 frps 的代理监听地址必须允许该 TCP 入口公网访问，且不得因此暴露其他明文服务。
 

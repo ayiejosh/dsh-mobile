@@ -31,21 +31,19 @@
 
 > DSH Mobile is a DeepSeek Harness community plugin; the native app supports Android only.
 >
-> **Current release: 0.4.5**. It supports DSH `0.1.7-alpha.2` mobile boot URLs, fixes reconnect failures and long-lived caching of failed resources, and adds an exit from App connection restoration. [Details](CHANGELOG.md).
+> **Current version: 0.4.6**. It supports DSH `0.1.7-rc.1`, improves remote diagnostics and mobile boot reliability, and adds existing-frps attachment with a self-signed HTTPS entry. [Release notes](CHANGELOG.md#046---2026-09-24).
 >
-> **Upgrade reminder**: update both the plugin and Android app to the published 0.4.5 release when practical. Existing pairings are retained and older apps can still connect, but Retry and Device list during connection restoration require the 0.4.5 app. [Compatibility notes](#compatibility).
->
-> **0.4.6 candidate, not released**: remote diagnostics gain a supplementary proxy probe, and self-hosted FRP gains existing-frps attachment and a self-signed entry. The self-signed entry requires the 0.4.6 Android app; the published 0.4.5 app cannot use it. The download below remains the installable 0.4.5 release. [Candidate notes](CHANGELOG.md#unreleased).
+> **Upgrade reminder**: update both the plugin and Android app to 0.4.6 when practical. Existing pairings remain intact. The self-signed FRP entry requires the 0.4.6 app; older apps can still use existing LAN and trusted-certificate remote connections. [Compatibility notes](#compatibility).
 
 <p align="center">
-  <a href="https://github.com/saya-ch/dsh-mobile/releases/download/v0.4.5/dsh-mobile-android-v0.4.5.apk"><img src="assets/brand/app-icon-rounded.svg" alt="DSH Mobile Android app icon" width="72" height="72"></a><br>
-  <a href="https://github.com/saya-ch/dsh-mobile/releases/download/v0.4.5/dsh-mobile-android-v0.4.5.apk"><strong>Download Android app 0.4.5</strong></a><br>
-  <sub><a href="https://github.com/saya-ch/dsh-mobile/releases/tag/v0.4.5">Release notes and checksums</a></sub>
+  <a href="https://github.com/saya-ch/dsh-mobile/releases/download/v0.4.6/dsh-mobile-android-v0.4.6.apk"><img src="assets/brand/app-icon-rounded.svg" alt="DSH Mobile Android app icon" width="72" height="72"></a><br>
+  <a href="https://github.com/saya-ch/dsh-mobile/releases/download/v0.4.6/dsh-mobile-android-v0.4.6.apk"><strong>Download Android app 0.4.6</strong></a><br>
+  <sub><a href="https://github.com/saya-ch/dsh-mobile/releases/tag/v0.4.6">Release notes and checksums</a></sub>
 </p>
 
 DSH Mobile is a DeepSeek Harness plugin that lets a mobile browser or the Android app connect over a protected LAN or an optional Tailscale Funnel, cpolar, cloudflared, self-hosted FRP, or own reverse-proxy remote path. Local and remote access keep the same sessions, Workspaces, messages, and tools while using separate switches and paired-device stores without modifying DeepSeek Harness source.
 
-Mobile access uses a dedicated HTTPS origin and device pairing. The Android app pins the private LAN CA; public remote paths use platform-trusted certificates. The self-signed FRP entry in the 0.4.6 candidate additionally requires its matching app to pin a remote CA during pairing.
+Mobile access uses a dedicated HTTPS origin and device pairing. The Android app pins the private LAN CA; public remote paths use platform-trusted certificates. The self-signed FRP entry additionally requires the 0.4.6 app to pin a remote CA during pairing.
 
 It also lets you customize the phone from a DSH conversation: `/mobile <what you want>`.
 
@@ -58,7 +56,7 @@ It also lets you customize the phone from a DSH conversation: `/mobile <what you
 - **Pairing and multi-device**: pair once via QR code, link, or key; Wi-Fi, hotspot, or IP changes normally recover automatically; the app shows all paired computers together in one device list (LAN and every remote), each with live reachability — switch, re-pair, or delete in one tap.
 - **One-click diagnostics and approval**: check versions, gateway, network interface, firewall, and the remote path with a redacted report; approve blocked third-party plugin connections per exact path.
 - **Task system notifications**: completion and pending-input alerts via Android system notifications, enabled from DSH General settings inside the app, with redacted lock-screen text.
-- **Defense in depth**: a private CA pinned for LAN, trusted HTTPS for public remote paths, and a remote CA pinned by the 0.4.6 app for the candidate self-signed FRP entry. Credentials are Keystore-backed, device tokens go only to their exact Origin, and third-party WebSockets are blocked by default.
+- **Defense in depth**: a private CA pinned for LAN, trusted HTTPS for public remote paths, and a remote CA pinned by the 0.4.6 app for the self-signed FRP entry. Credentials are Keystore-backed, device tokens go only to their exact Origin, and third-party WebSockets are blocked by default.
 
 A paired device is fully trusted and can operate the DSH on the computer. Use this only on a trusted home or office LAN, or a trusted VPN.
 
@@ -145,7 +143,7 @@ Remote providers may impose bandwidth and connection limits: the [cpolar Free pl
 
 Tailscale Funnel has broad reach but may be unreliable from mainland China. Its runtime ties the public listener to the parent process and a bounded control channel; parent exit, channel closure, or an explicit stop ends the current generation and cleans up its resources. cpolar is better suited to mainland networks, while self-hosted FRP fits users who already have a VPS and want to avoid public-provider bandwidth quotas. cloudflared runs in two modes: a quick tunnel needs no account or sign-in, but its hostname is random, changes on every reconnect, and is positioned by Cloudflare for testing with no uptime guarantee, so it suits temporary or verification use rather than a permanent channel; a named tunnel uses a Cloudflare account token and keeps one fixed public hostname across restarts. An unregistered domain on a mainland-China VPS may be intercepted by the cloud provider; public IPv4 mode avoids that dependency. The plugin validates pinned on-demand components, stores their configuration and programs entirely under `$DSH_HOME/mobile-access/`, and can remove them completely from the panel.
 
-The released 0.4.5 self-hosted FRP mode uses an HTTP vhost to the DSH loopback gateway. Its plaintext VPS listener must be loopback-only, with Caddy providing public HTTPS. The 0.4.6 candidate adds existing-frps attachment without installing or changing the server: its public-CA mode still needs a restricted HTTP vhost and Caddy, while its self-signed mode forwards raw TCP to a computer-side HTTPS gateway whose CA the 0.4.6 Android app pins during pairing. The self-signed mode currently uses public IPv4 and is unavailable to the released 0.4.5 app. Neither mode exposes arbitrary FRP configuration. Because frps `proxyBindAddr` governs proxy listeners globally, do not change it for the new TCP entry without checking existing plaintext vhosts. See the [candidate attachment guide](docs/ATTACH_EXISTING_FRPS.en.md).
+Managed self-hosted FRP uses an HTTP vhost to the DSH loopback gateway. Its plaintext VPS listener must be loopback-only, with Caddy providing public HTTPS. Version 0.4.6 adds existing-frps attachment without installing or changing the server: its public-CA mode still needs a restricted HTTP vhost and Caddy, while its self-signed mode forwards raw TCP to a computer-side HTTPS gateway whose CA the 0.4.6 Android app pins during pairing. The self-signed mode currently uses public IPv4 and is unavailable to older apps. Neither mode exposes arbitrary FRP configuration. Because frps `proxyBindAddr` governs proxy listeners globally, do not change it for the new TCP entry without checking existing plaintext vhosts. See the [attachment guide](docs/ATTACH_EXISTING_FRPS.en.md).
 
 The own-proxy HTTP backend must remain on a trusted private network: **never port-forward it publicly or bypass it by proxying to DSH or the existing LAN 3443 gateway**. CIDRs match the proxy's direct TCP peer, not forwarded headers. Preserve the external Host (including port), Origin, cookies and WebSocket. Clearing proxy settings keeps paired remote devices.
 
@@ -186,7 +184,7 @@ The examples above, applied:
 
 ## Device management
 
-The Android app shows multiple computers at once in one **Paired computers** list: LAN, cpolar, cloudflared, Tailscale Funnel, and self-hosted FRP pairings together. The first upgrade migrates the legacy LAN and remote credentials without requiring another pairing; an address change merges into a record with the same `instanceId` and keeps its custom name. The 0.4.6 candidate's self-signed FRP mode uses its own CA fingerprint as identity, so its first pairing may appear as a separate row from LAN for the same computer. Android Keystore encrypts device tokens and LAN CAs; the 0.4.6 app also encrypts that self-signed entry's pinned remote CA. These values never appear in the list or QR code.
+The Android app shows multiple computers at once in one **Paired computers** list: LAN, cpolar, cloudflared, Tailscale Funnel, and self-hosted FRP pairings together. The first upgrade migrates the legacy LAN and remote credentials without requiring another pairing; an address change merges into a record with the same `instanceId` and keeps its custom name. Self-signed FRP uses its own CA fingerprint as identity, so its first pairing may appear as a separate row from LAN for the same computer. Android Keystore encrypts device tokens and LAN CAs; the 0.4.6 app also encrypts that self-signed entry's pinned remote CA. These values never appear in the list or QR code.
 
 Each row shows its custom name, transport, Origin, live reachability, and last connection time. A green dot means **Reachable**; a gray dot means **Checking**, **Temporarily unreachable**, **Pairing expired**, or **Removed on computer**. The check validates the DSH Gateway over HTTPS instead of using ICMP, so a temporary network outage is not mistaken for computer-side revocation.
 
@@ -218,7 +216,7 @@ Compatibility and WebSocket rules:
 
 Proxied pages allow HTTP frames for compatibility with some community plugins; those pages are unencrypted and can be altered, and browsers may still block them as mixed content. Use HTTPS for sensitive work. The same warning appears at the top of the remote panel when it is opened over HTTPS.
 
-- Version 0.4.5 has been contract-checked and boot-tested against DSH `0.1.7-alpha.2` (renderer-v2). The DSH page must expose the standard session, `main`/`panelInfo`, and `rightbar` slots; the community plugin must register its panel or sidebar content through DSH's standard entry points.
+- Version 0.4.6 has been contract-checked and boot-tested against DSH `0.1.7-alpha.2` and `0.1.7-rc.1` (renderer-v2). The DSH page must expose the standard session, `main`/`panelInfo`, and `rightbar` slots; the community plugin must register its panel or sidebar content through DSH's standard entry points.
 - The gateway allows first-party DSH WebSocket paths by default, including `/sidebar/ws/terminal`. Other paths used by community sidebar plugins are blocked by default and appear in Diagnostics; the `/sidebar/ws/agent-opens` and `/sidebar/ws/agent-terminals` paths in the image are examples that must be reviewed for the actual plugin.
 - In **Connection diagnostics → Third-party WebSocket paths**, select **Allow** only for an exact path you have verified. Query strings and fuzzy prefixes are rejected; **Allow all** is not recommended. Approved paths can be removed at any time, and the same policy applies to LAN and remote connections.
 - Approval only lets that path pass through the authenticated, same-origin DSH Mobile gateway. It does not open arbitrary TCP/UDP ports or bypass device pairing. If a community plugin still fails, check the path recorded by Diagnostics and approve one path at a time.
@@ -306,7 +304,7 @@ On macOS, local network, self-hosted FRP, and the own reverse proxy work; the th
 
 | DSH Mobile plugin | Verified DeepSeek Harness version |
 | --- | --- |
-| `0.4.6` (candidate, unreleased) | `0.1.7-alpha.2` and `0.1.7-rc.1` (source contract, isolated pairing, and workspace baseline over WebSocket; not a real cross-network phone test) |
+| `0.4.6` | `0.1.7-alpha.2` and `0.1.7-rc.1` (source contract, isolated pairing, and workspace baseline over WebSocket) |
 | `0.4.5` | `0.1.7-alpha.2` (source contract check, local and remote gateway integration) |
 | `0.4.4` | `0.1.6-alpha.2` (local source and renderer-v2 contract check) |
 | `0.4.3` | `0.1.6-alpha.2` (local source and renderer-v2 contract check) |

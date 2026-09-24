@@ -31,21 +31,19 @@
 
 > DSH Mobile 是 DeepSeek Harness 社区插件，原生 App 仅支持 Android。
 >
-> **当前已发布：0.4.5**。适配 DSH `0.1.7-alpha.2` 的移动端启动脚本地址，修复重连异常与失败资源的长期缓存，并为 App 的连接恢复增加退出入口。[详细记录](CHANGELOG.md)。
+> **当前版本：0.4.6**。适配 DSH `0.1.7-rc.1`，改进远程诊断、移动端启动稳定性，并新增接入既有 frps 与自签 HTTPS 入口。[更新记录](CHANGELOG.md#046---2026-09-24)。
 >
-> **升级提醒**：建议插件与 Android App 同步更新至已发布的 0.4.5；已有配对会保留，旧版 App 仍可连接，但连接恢复时的重试和设备列表入口需要 0.4.5 App。[兼容说明](#兼容性)。
->
-> **0.4.6 候选版，尚未发布**：远程诊断增加代理补充探测，自建 FRP 增加接入既有 frps 与自签入口。自签入口需要 0.4.6 Android App；已发布的 0.4.5 App 不支持。下方仍提供线上可安装的 0.4.5。[候选版记录](CHANGELOG.md#unreleased)。
+> **升级提醒**：建议插件与 Android App 同步更新至 0.4.6，已有配对会保留。自签 FRP 入口需要 0.4.6 App；旧版 App 仍可使用原有局域网和受信任证书的远程连接。[兼容说明](#兼容性)。
 
 <p align="center">
-  <a href="https://github.com/saya-ch/dsh-mobile/releases/download/v0.4.5/dsh-mobile-android-v0.4.5.apk"><img src="assets/brand/app-icon-rounded.svg" alt="DSH Mobile 安卓应用图标" width="72" height="72"></a><br>
-  <a href="https://github.com/saya-ch/dsh-mobile/releases/download/v0.4.5/dsh-mobile-android-v0.4.5.apk"><strong>下载 Android App 0.4.5</strong></a><br>
-  <sub><a href="https://github.com/saya-ch/dsh-mobile/releases/tag/v0.4.5">版本说明与校验文件</a></sub>
+  <a href="https://github.com/saya-ch/dsh-mobile/releases/download/v0.4.6/dsh-mobile-android-v0.4.6.apk"><img src="assets/brand/app-icon-rounded.svg" alt="DSH Mobile 安卓应用图标" width="72" height="72"></a><br>
+  <a href="https://github.com/saya-ch/dsh-mobile/releases/download/v0.4.6/dsh-mobile-android-v0.4.6.apk"><strong>下载 Android App 0.4.6</strong></a><br>
+  <sub><a href="https://github.com/saya-ch/dsh-mobile/releases/tag/v0.4.6">版本说明与校验文件</a></sub>
 </p>
 
 DSH Mobile 是一个 DeepSeek Harness 插件，让手机浏览器或 Android App 通过局域网，或可选的 Tailscale Funnel、cpolar、cloudflared、自建 FRP 或自有反向代理远程通道连接电脑，继续使用同一份会话、工作区、消息和工具。局域网与远程访问分别启停、分别管理设备，且都不修改 DeepSeek Harness 源码。
 
-移动访问使用独立 HTTPS 与设备配对；Android App 固定局域网私有 CA，公开远程通道使用系统信任的证书；0.4.6 候选版的自签 FRP 入口还需由同版本 App 在配对时固定远程 CA。
+移动访问使用独立 HTTPS 与设备配对；Android App 固定局域网私有 CA，公开远程通道使用系统信任的证书；自签 FRP 入口还需由 0.4.6 App 在配对时固定远程 CA。
 
 它还能在 DSH 对话里用 `/mobile <需求>` 定制手机端。
 
@@ -58,7 +56,7 @@ DSH Mobile 是一个 DeepSeek Harness 插件，让手机浏览器或 Android App
 - **配对与多设备**：扫码、链接或密钥配对一次；切换 Wi-Fi、热点或 IP 后通常自动恢复；App 在一个设备列表中同时显示多台已配对电脑（局域网与全部远程），每台实时显示可达状态，一键切换、重新配对或删除。
 - **一键诊断与放行**：检查版本、网关、网卡、防火墙和远程通道，生成脱敏报告；被拦截的第三方插件连接按确切路径一键放行。
 - **任务系统通知**：任务完成与待输入以 Android 系统通知提醒，可在 App 内的 DSH 常规设置中开启，锁屏文本脱敏。
-- **纵深安全**：局域网固定私有 CA，公开远程入口使用受信任 HTTPS；0.4.6 候选版的自签 FRP 入口另由 0.4.6 App 固定远程 CA。凭据存 Keystore，设备令牌只发往精确 Origin，第三方 WS 默认拦截。
+- **纵深安全**：局域网固定私有 CA，公开远程入口使用受信任 HTTPS；自签 FRP 入口由 0.4.6 App 固定远程 CA。凭据存 Keystore，设备令牌只发往精确 Origin，第三方 WS 默认拦截。
 
 配对设备被视为完全信任，可以操作电脑上的 DSH；建议只在可信的家庭、办公局域网或可信 VPN 中使用。
 
@@ -145,7 +143,7 @@ dsh plugin --profile web add dshmarket
 
 Tailscale Funnel 覆盖范围广，但在中国大陆网络下可能不稳定。其运行组件把公开监听生命周期绑定到父进程和受限控制通道；父进程退出、控制通道关闭或显式停止时会结束当前代次并清理资源。cpolar 更适合国内网络；自建 FRP 适合已有 VPS、希望避开公共服务带宽限制的用户。cloudflared 有两种模式：快速隧道不需要账号或登录，但地址随机、每次重连都会变化，官方定位为测试用途且无可用性保证，因此只适合临时或验证场景；命名隧道使用 Cloudflare 账号令牌，能保留重启后不变的固定公网域名。中国大陆 VPS 上的未备案域名可能被云厂商拦截，此时可使用公网 IPv4 模式。插件会校验按需下载的固定版本组件，配置与程序均保存在 `$DSH_HOME/mobile-access/`，可随时在面板中彻底清除。
 
-已发布 0.4.5 的自建 FRP 使用指向 DSH 回环网关的 HTTP vhost：VPS 上的明文 vhost 只允许回环访问，由 Caddy 提供公网 HTTPS。0.4.6 候选版新增的“接入既有 frps”不会安装或改动服务器；公开 CA 档仍需受限 HTTP vhost 与 Caddy，自签档则用 frps TCP 透传至电脑端 HTTPS 网关，须由 0.4.6 Android App 在配对时固定 CA。自签档目前面向公网 IPv4，已发布的 0.4.5 App 不支持；两档都不开放任意 FRP 配置。frps 的 `proxyBindAddr` 是全局代理监听设置，不能只为新增 TCP 入口调整而忽略已有明文 vhost。[候选版接入指南](docs/ATTACH_EXISTING_FRPS.md)。
+自建 FRP 的托管部署使用指向 DSH 回环网关的 HTTP vhost：VPS 上的明文 vhost 只允许回环访问，由 Caddy 提供公网 HTTPS。0.4.6 新增“接入既有 frps”，不会安装或改动服务器；公开 CA 档仍需受限 HTTP vhost 与 Caddy，自签档则用 frps TCP 透传至电脑端 HTTPS 网关，须由 0.4.6 Android App 在配对时固定 CA。自签档目前面向公网 IPv4，旧版 App 不支持；两档都不开放任意 FRP 配置。frps 的 `proxyBindAddr` 是全局代理监听设置，不能只为新增 TCP 入口调整而忽略已有明文 vhost。[接入指南](docs/ATTACH_EXISTING_FRPS.md)。
 
 自有反向代理的 HTTP 后端只允许留在可信私网；**不要把它映射到公网，也不要绕过它直连 DSH 或现有 LAN 3443**。来源 CIDR 匹配代理的直接 TCP 来源，不信任转发头；反代须保留外部 Host（含端口）、Origin、Cookie 和 WebSocket。清除代理配置不会删除已配对远程设备。
 
@@ -186,7 +184,7 @@ Tailscale Funnel 覆盖范围广，但在中国大陆网络下可能不稳定。
 
 ## 设备管理
 
-Android App 用一个“已配对设备”列表同时显示多台电脑：局域网、cpolar、cloudflared、Tailscale Funnel 和自建 FRP 配对共处一处。首次升级会自动迁移旧版局域网与远程凭据，不要求重新配对；地址变化且 `instanceId` 与原记录一致时会合并条目，保留自定义名称。0.4.6 候选版的自签 FRP 使用独立 CA 指纹作为身份，首次与局域网配对时可能显示为另一条记录。设备 Token 和局域网 CA 由 Android Keystore 加密保存；0.4.6 App 还会加密保存自签 FRP 入口固定的远程 CA。这些信息不会显示在设备列表或二维码中。
+Android App 用一个“已配对设备”列表同时显示多台电脑：局域网、cpolar、cloudflared、Tailscale Funnel 和自建 FRP 配对共处一处。首次升级会自动迁移旧版局域网与远程凭据，不要求重新配对；地址变化且 `instanceId` 与原记录一致时会合并条目，保留自定义名称。自签 FRP 使用独立 CA 指纹作为身份，首次与局域网配对时可能显示为另一条记录。设备 Token 和局域网 CA 由 Android Keystore 加密保存；0.4.6 App 还会加密保存自签 FRP 入口固定的远程 CA。这些信息不会显示在设备列表或二维码中。
 
 每条记录显示自定义名称、连接方式、Origin、实时可达状态和最近连接时间。绿色状态点表示“可达”，灰色状态点表示“检测中”“暂不可达”“配对已过期”或“电脑端已移除”；可达性检查直接验证 DSH Gateway，不依赖 ICMP，也不会把暂时断网误判成电脑端撤销。
 
@@ -218,7 +216,7 @@ Android App 用一个“已配对设备”列表同时显示多台电脑：局�
 
 代理页面为兼容部分社区插件允许嵌入 HTTP 页面；这类内容未加密，可能被篡改，浏览器也可能因混合内容策略拦截。处理敏感内容时请使用 HTTPS。通过 HTTPS 管理入口打开远程面板时，页面顶部会显示相同提醒。
 
-- 0.4.5 已按 DSH `0.1.7-alpha.2` 做 renderer-v2 契约检查与启动包联调。DSH 页面需要提供标准的会话、`main`/`panelInfo` 和 `rightbar` 插槽；插件自身需要通过 DSH 的标准面板或侧边栏入口注册内容。
+- 0.4.6 已按 DSH `0.1.7-alpha.2` 和 `0.1.7-rc.1` 做 renderer-v2 契约检查与隔离启动联调。DSH 页面需要提供标准的会话、`main`/`panelInfo` 和 `rightbar` 插槽；插件自身需要通过 DSH 的标准面板或侧边栏入口注册内容。
 - 网关默认只允许 DSH 内置的第一方 WebSocket 路径。社区侧边栏插件使用的其他路径默认拦截，通常会在诊断页显示为待处理项目；截图中的`/sidebar/ws/agent-opens` 和`/sidebar/ws/agent-terminals` 就属于这类需要按实际插件确认的路径。
 - 在 **连接诊断 → 第三方 WebSocket 路径** 中，只对确认过的精确路径点击 **允许**。系统不接受带查询字符串或模糊前缀的路径；不建议使用“全部允许”。已允许的路径可以随时移除，局域网和远程连接使用同一套规则。
 - 放行只代表该路径可以通过已认证、同源的 DSH Mobile 网关，不会开放任意 TCP/UDP 端口，也不会绕过设备配对。若社区插件仍然连接失败，先看诊断页的实际拦截路径，再按一条路径放行。
@@ -306,7 +304,7 @@ macOS 上局域网、自建 FRP 与自有反向代理可用；三个托管组件
 
 | DSH Mobile 插件                         | 验证支持的 DeepSeek Harness 版本                             |
 | ----------------------------------------- | -------------------------------------------------------------- |
-| `0.4.6`（候选，未发布） | `0.1.7-alpha.2`、`0.1.7-rc.1`（源码契约、隔离配对及 WebSocket 工作区读取；尚非跨网真机验收） |
+| `0.4.6` | `0.1.7-alpha.2`、`0.1.7-rc.1`（源码契约、隔离配对及 WebSocket 工作区读取） |
 | `0.4.5` | `0.1.7-alpha.2`（源码契约检查、本机局域网及远程网关联调） |
 | `0.4.4` | `0.1.6-alpha.2`（本机源码与 renderer-v2 契约检查） |
 | `0.4.3` | `0.1.6-alpha.2`（本机源码与 renderer-v2 契约检查） |

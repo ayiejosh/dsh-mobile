@@ -1,6 +1,6 @@
 # 自建 FRP 维护说明
 
-既有 frps 接入与自签入口属于 0.4.6 候选版，未包含在已发布的 0.4.5 插件与 App 中；自签档需要 0.4.6 Android App。下文的 2026-09-03 真机记录只验证托管部署的公开证书 IP 档，不是 attach 档验收结果。
+既有 frps 接入与自签入口从 0.4.6 起提供；自签档需要 0.4.6 Android App。下文的 2026-09-03 真机记录只验证托管部署的公开证书 IP 档，不是 attach 档验收结果。
 
 面向维护者。用户文档见 [SELF_HOSTED_FRP.md](SELF_HOSTED_FRP.md)；「接入既有 frps + 自签穿透」用户指南见
 [ATTACH_EXISTING_FRPS.md](ATTACH_EXISTING_FRPS.md)。

@@ -4,23 +4,15 @@ GitHub 的 [Contributors 图表](https://github.com/saya-ch/dsh-mobile/graphs/co
 
 GitHub's Contributors graph counts commits on the default branch; issue reports and PR proposals cannot be manually added to it. This page credits community members by how they contributed, through 2026-09-24. The repository maintainer and automated dependency updates remain visible in GitHub's history.
 
-## 0.4.6 候选版的代码贡献 / 0.4.6 candidate code contributions
-
-0.4.6 候选版保留以下 PR 原作者的代码提交；GitHub 的贡献者图表以进入默认分支的提交历史为准。这些改动尚未发布，亦不属于已发布的 0.4.5。 / The 0.4.6 candidate retains the original authors' PR commits. GitHub's Contributors graph follows commit history on the default branch; this work is not yet released and is not part of 0.4.5.
-
-| 社区成员 / Community member | 代码贡献 / Code contribution |
-| --- | --- |
-| [@abworks-dev](https://github.com/abworks-dev) | [#99](https://github.com/saya-ch/dsh-mobile/pull/99): 远程连接诊断的代理补充探测 / proxy-assisted remote diagnostics |
-| [@liudasheng](https://github.com/liudasheng) | [#100](https://github.com/saya-ch/dsh-mobile/pull/100): 接入既有 frps 与入口证书方案 / existing-frps attachment and entry TLS modes |
-
 ## 已发布版本中的合并 PR / Merged PRs in released versions
 
 | 社区成员 / Community member | 已合并 PR / Merged PRs |
 | --- | --- |
 | [@1624318455](https://github.com/1624318455) | [#93](https://github.com/saya-ch/dsh-mobile/pull/93) |
-| [@abworks-dev](https://github.com/abworks-dev) | [#91](https://github.com/saya-ch/dsh-mobile/pull/91), [#98](https://github.com/saya-ch/dsh-mobile/pull/98) |
+| [@abworks-dev](https://github.com/abworks-dev) | [#91](https://github.com/saya-ch/dsh-mobile/pull/91), [#98](https://github.com/saya-ch/dsh-mobile/pull/98), [#99](https://github.com/saya-ch/dsh-mobile/pull/99) |
 | [@idoall](https://github.com/idoall) | [#61](https://github.com/saya-ch/dsh-mobile/pull/61), [#66](https://github.com/saya-ch/dsh-mobile/pull/66), [#67](https://github.com/saya-ch/dsh-mobile/pull/67), [#77](https://github.com/saya-ch/dsh-mobile/pull/77) |
 | [@JackRushante](https://github.com/JackRushante) | [#16](https://github.com/saya-ch/dsh-mobile/pull/16) |
+| [@liudasheng](https://github.com/liudasheng) | [#100](https://github.com/saya-ch/dsh-mobile/pull/100) |
 | [@longisland-icetea](https://github.com/longisland-icetea) | [#59](https://github.com/saya-ch/dsh-mobile/pull/59), [#60](https://github.com/saya-ch/dsh-mobile/pull/60), [#63](https://github.com/saya-ch/dsh-mobile/pull/63) |
 | [@qzyqmzn](https://github.com/qzyqmzn) | [#38](https://github.com/saya-ch/dsh-mobile/pull/38), [#75](https://github.com/saya-ch/dsh-mobile/pull/75) |
 | [@StrawberryAO](https://github.com/StrawberryAO) | [#34](https://github.com/saya-ch/dsh-mobile/pull/34), [#40](https://github.com/saya-ch/dsh-mobile/pull/40) |
