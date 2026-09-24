@@ -25,6 +25,22 @@ jobs:
           node-version: 24.x
       - run: node mobile/scripts/check-dsh-compatibility.mjs dsh
 
+  mobile-client-boot:
+    name: DSH Mobile browser boot
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 24.x
+          cache: npm
+      - run: npm ci
+      - run: npm run build
+      - name: Install the matching released DSH Web runtime
+        run: npm install --no-save --package-lock=false @deepseek-ai/dsh@0.1.7-alpha.2
+      - run: npx playwright install --with-deps chromium --only-shell
+      - run: npm run smoke:dsh-boot
+
   gateway:
     name: Gateway (${{ matrix.os }}, Node ${{ matrix.node }})
     runs-on: ${{ matrix.os }}

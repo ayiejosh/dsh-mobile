@@ -347,6 +347,14 @@ npm ci
 npm run verify
 ```
 
+真实启动冒烟另用临时 DSH Home、随机回环端口和 Chromium 配对，不访问现有用户配置，也不发送模型请求。首次在本机运行时安装测试依赖：
+
+```powershell
+npm install --no-save --package-lock=false @deepseek-ai/dsh@0.1.7-alpha.2
+npx playwright install chromium --only-shell
+npm run smoke:dsh-boot
+```
+
 Android 构建见 [App 文档](https://github.com/saya-ch/dsh-mobile/blob/main/apps/mobile/README.zh-CN.md)。
 
 Apache-2.0，详见 [LICENSE](LICENSE)。

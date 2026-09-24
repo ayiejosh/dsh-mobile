@@ -347,4 +347,12 @@ npm ci
 npm run verify
 ```
 
+The real browser-startup smoke uses a temporary DSH home, OS-assigned loopback ports, and Chromium pairing. It neither reads an existing user profile nor sends a model request. Install its local prerequisites before running it:
+
+```powershell
+npm install --no-save --package-lock=false @deepseek-ai/dsh@0.1.7-alpha.2
+npx playwright install chromium --only-shell
+npm run smoke:dsh-boot
+```
+
 See the [Android guide](https://github.com/saya-ch/dsh-mobile/blob/main/apps/mobile/README.md). Licensed under [Apache-2.0](LICENSE).

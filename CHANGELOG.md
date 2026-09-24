@@ -9,6 +9,8 @@ Notable changes to DSH Mobile are recorded here. GitHub Releases remain the sour
 - Harden the integration before release: require a CA-bound `dsh2` pairing key for self-signed ingress, prevent saved FRP tokens from being returned to page scripts, retain the CA identity across restarts, and renew the ingress leaf without replacing its CA.
 - Keep Node-only imports out of the built mobile client so DSH can activate the App frontend; add a build check for this regression.
 - Resolve Windows `whoami.exe` and `icacls.exe` from the system directory rather than `PATH`, fixing activation when Git for Windows places GNU tools first (thanks @jueruibo for [#101](https://github.com/saya-ch/dsh-mobile/issues/101)).
+- Restore provider-specific recovery guidance in remote diagnostics for the supported error codes across all three languages; remove an unused Android restore-target ordering path without changing paired-device startup.
+- Add an isolated DSH browser-startup check that pairs a test client and requires the dedicated mobile layout to mount; keep it separate from the four-platform unit-test matrix.
 
 ## 0.4.5 - 2026-09-23
 
