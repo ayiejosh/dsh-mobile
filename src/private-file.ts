@@ -1,10 +1,19 @@
 import { chmod } from 'node:fs/promises'
+import { win32 } from 'node:path'
 import { execFileText as execFile } from './exec-file.js'
 
 let userSidTask: Promise<string> | undefined
 
+function windowsSystemTool(name: 'whoami.exe' | 'icacls.exe'): string {
+  const systemRoot = process.env.SystemRoot ?? process.env.WINDIR
+  if (systemRoot === undefined || !win32.isAbsolute(systemRoot)) {
+    throw new Error('Windows system root is unavailable')
+  }
+  return win32.join(systemRoot, 'System32', name)
+}
+
 async function currentWindowsUserSid(): Promise<string> {
-  userSidTask ??= execFile('whoami.exe', ['/user', '/fo', 'csv', '/nh'], {
+  userSidTask ??= execFile(windowsSystemTool('whoami.exe'), ['/user', '/fo', 'csv', '/nh'], {
     encoding: 'utf8',
     windowsHide: true,
     timeout: 10_000,
@@ -24,7 +33,7 @@ export async function restrictPrivateFile(file: string, mode = 0o600): Promise<v
   await chmod(file, mode)
   if (process.platform !== 'win32') return
   const userSid = await currentWindowsUserSid()
-  await execFile('icacls.exe', [
+  await execFile(windowsSystemTool('icacls.exe'), [
     file,
     '/inheritance:r',
     '/grant:r',

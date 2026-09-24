@@ -1,4 +1,4 @@
-import { isIP } from 'node:net'
+import { isIP } from './ip.js'
 import {
   createFrpcToml,
   isFrpSelfSignedIngress,

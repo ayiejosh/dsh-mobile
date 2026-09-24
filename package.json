@@ -64,7 +64,7 @@
     }
   },
   "scripts": {
-    "build": "tsdown",
+    "build": "tsdown && node ./scripts/check-client-bundle.mjs",
     "build:funnel-host": "node ./scripts/build-funnel-host.mjs",
     "check:funnel-licenses": "node ./scripts/funnel-third-party-licenses.mjs",
     "check:funnel-licenses:full": "node ./scripts/funnel-third-party-licenses.mjs --full-check",
