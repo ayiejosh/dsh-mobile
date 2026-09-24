@@ -2,25 +2,17 @@
 
 GitHub 的 [Contributors 图表](https://github.com/saya-ch/dsh-mobile/graphs/contributors) 按进入默认分支的提交自动统计，无法手动加入仅提交 issue 或 PR 提案的成员。本页按实际参与方式感谢社区成员；仓库维护者与自动依赖更新仍可在 GitHub 历史记录中查看。
 
-GitHub's Contributors graph counts commits on the default branch; issue reports and PR proposals cannot be manually added to it. This page credits community members by how they contributed, through 2026-09-23. The repository maintainer and automated dependency updates remain visible in GitHub's history.
-
-## 待发布的代码贡献 / Unreleased code contributions
-
-本次待发布变更保留以下 PR 原作者的代码提交；GitHub 的贡献者图表以进入默认分支的提交历史为准。这些改动不属于已发布的 0.4.5。 / This unreleased change retains the original authors' PR commits. GitHub's Contributors graph follows commit history on the default branch; none of this work is part of the published 0.4.5 release.
-
-| 社区成员 / Community member | 代码贡献 / Code contribution |
-| --- | --- |
-| [@abworks-dev](https://github.com/abworks-dev) | [#99](https://github.com/saya-ch/dsh-mobile/pull/99): 远程连接诊断的代理补充探测 / proxy-assisted remote diagnostics |
-| [@liudasheng](https://github.com/liudasheng) | [#100](https://github.com/saya-ch/dsh-mobile/pull/100): 接入既有 frps 与入口证书方案 / existing-frps attachment and entry TLS modes |
+GitHub's Contributors graph counts commits on the default branch; issue reports and PR proposals cannot be manually added to it. This page credits community members by how they contributed, through 2026-09-24. The repository maintainer and automated dependency updates remain visible in GitHub's history.
 
 ## 已发布版本中的合并 PR / Merged PRs in released versions
 
 | 社区成员 / Community member | 已合并 PR / Merged PRs |
 | --- | --- |
 | [@1624318455](https://github.com/1624318455) | [#93](https://github.com/saya-ch/dsh-mobile/pull/93) |
-| [@abworks-dev](https://github.com/abworks-dev) | [#91](https://github.com/saya-ch/dsh-mobile/pull/91), [#98](https://github.com/saya-ch/dsh-mobile/pull/98) |
+| [@abworks-dev](https://github.com/abworks-dev) | [#91](https://github.com/saya-ch/dsh-mobile/pull/91), [#98](https://github.com/saya-ch/dsh-mobile/pull/98), [#99](https://github.com/saya-ch/dsh-mobile/pull/99) |
 | [@idoall](https://github.com/idoall) | [#61](https://github.com/saya-ch/dsh-mobile/pull/61), [#66](https://github.com/saya-ch/dsh-mobile/pull/66), [#67](https://github.com/saya-ch/dsh-mobile/pull/67), [#77](https://github.com/saya-ch/dsh-mobile/pull/77) |
 | [@JackRushante](https://github.com/JackRushante) | [#16](https://github.com/saya-ch/dsh-mobile/pull/16) |
+| [@liudasheng](https://github.com/liudasheng) | [#100](https://github.com/saya-ch/dsh-mobile/pull/100) |
 | [@longisland-icetea](https://github.com/longisland-icetea) | [#59](https://github.com/saya-ch/dsh-mobile/pull/59), [#60](https://github.com/saya-ch/dsh-mobile/pull/60), [#63](https://github.com/saya-ch/dsh-mobile/pull/63) |
 | [@qzyqmzn](https://github.com/qzyqmzn) | [#38](https://github.com/saya-ch/dsh-mobile/pull/38), [#75](https://github.com/saya-ch/dsh-mobile/pull/75) |
 | [@StrawberryAO](https://github.com/StrawberryAO) | [#34](https://github.com/saya-ch/dsh-mobile/pull/34), [#40](https://github.com/saya-ch/dsh-mobile/pull/40) |
@@ -48,6 +40,7 @@ GitHub's Contributors graph counts commits on the default branch; issue reports 
 | [@idoall](https://github.com/idoall) | [#42](https://github.com/saya-ch/dsh-mobile/issues/42), [#45](https://github.com/saya-ch/dsh-mobile/issues/45), [#46](https://github.com/saya-ch/dsh-mobile/issues/46), [#47](https://github.com/saya-ch/dsh-mobile/issues/47), [#62](https://github.com/saya-ch/dsh-mobile/issues/62), [#64](https://github.com/saya-ch/dsh-mobile/issues/64) |
 | [@IvyC-zz](https://github.com/IvyC-zz) | [#58](https://github.com/saya-ch/dsh-mobile/issues/58), [#78](https://github.com/saya-ch/dsh-mobile/issues/78) |
 | [@jillkayat](https://github.com/jillkayat) | [#10](https://github.com/saya-ch/dsh-mobile/issues/10) |
+| [@jueruibo](https://github.com/jueruibo) | [#101](https://github.com/saya-ch/dsh-mobile/issues/101) |
 | [@KMGTPEZY](https://github.com/KMGTPEZY) | [#95](https://github.com/saya-ch/dsh-mobile/issues/95) |
 | [@LWping](https://github.com/LWping) | [#94](https://github.com/saya-ch/dsh-mobile/issues/94) |
 | [@oliverwan97](https://github.com/oliverwan97) | [#26](https://github.com/saya-ch/dsh-mobile/issues/26) |

@@ -1,6 +1,7 @@
 import { readFileSync, readdirSync } from 'node:fs'
 import postcss from 'postcss'
 import { afterEach, describe, expect, it, vi } from 'vitest'
+import { collectConnectionDiagnostics, type DiagnosticSnapshot } from '../src/diagnostics.js'
 import {
   apply,
   bindClientResponseLifetime,
@@ -12,6 +13,7 @@ import {
   frpAttachFormErrorCode,
   clientReleaseInfo,
   diagnosticEntriesForRender,
+  diagnosticControllerAction,
   diagnosticOverallForChecks,
   diagnosticServerCopy,
   DIAGNOSTIC_REASON_MESSAGES,
@@ -54,6 +56,41 @@ afterEach(() => {
 })
 
 describe('mobile-control localization', () => {
+  it('uses raw Host controller codes to render specific actions in every locale', async () => {
+    const failures = [
+      { provider: 'tailscale', code: 'funnel_permission_required', key: 'funnelPermission' },
+      { provider: 'frp', code: 'frp_component_missing', key: 'frpMissing' },
+      { provider: 'tailscale', code: 'sidecar_exited', key: 'controlChannelFailed' },
+    ] as const
+    for (const { provider, code, key } of failures) {
+      const snapshot: DiagnosticSnapshot = {
+        dshVersion: '0.1.7-alpha.2',
+        lan: { configured: false, running: false },
+        remote: { provider, running: true, state: 'error', errorCode: code },
+      }
+      const result = await collectConnectionDiagnostics(snapshot, {
+        firewall: async () => ({ state: 'not-applicable' }),
+        remote: async () => ({ state: 'not-applicable' }),
+      })
+      const check = result.checks.find(entry => entry.id === 'remote')
+      expect(check?.reason).toBe('remote-controller-error')
+      expect(check?.facts?.controllerCode).toBe(code)
+      for (const locale of ['en', 'it', 'zh'] as const) {
+        const fallback = DIAGNOSTIC_REASON_MESSAGES[locale]['remote-controller-error'][1]
+        expect(diagnosticControllerAction(check?.facts?.controllerCode, locale, fallback))
+          .toBe((MOBILE_CONTROL_MESSAGES[locale] as Record<string, string>)[key])
+      }
+    }
+  })
+
+  it('keeps generic diagnostic guidance for unknown and status-only controller codes', () => {
+    for (const locale of ['en', 'it', 'zh'] as const) {
+      const fallback = DIAGNOSTIC_REASON_MESSAGES[locale]['remote-controller-error'][1]
+      expect(diagnosticControllerAction('future_provider_error', locale, fallback)).toBe(fallback)
+      expect(diagnosticControllerAction('cpolar_port_unavailable', locale, fallback)).toBe(fallback)
+    }
+  })
+
   it('uses DSH theme layers for remote cards while preserving a scannable QR background', () => {
     expect(CONTROL_STYLES).toContain('dsh-mobile-control__provider{')
     expect(CONTROL_STYLES).toContain('background:var(--dsw-alias-bg-layer-2,#fff)')
@@ -295,7 +332,7 @@ describe('mobile-control localization', () => {
     // Every code the panel can translate must exist in every locale, otherwise a failed
     // request falls back to printing the raw server code in all three languages.
     const source = readFileSync(new URL('../src/client.ts', import.meta.url), 'utf8')
-    const table = /const REMOTE_ERROR_MESSAGE_KEYS[^{]*\{([\s\S]*?)\n  \}/u.exec(source)?.[1] ?? ''
+    const table = /const REMOTE_ERROR_MESSAGE_KEYS[^{]*\{([\s\S]*?)\n\}/u.exec(source)?.[1] ?? ''
     const keys = [...table.matchAll(/:\s*'([A-Za-z0-9]+)'/gu)].map((match) => match[1] ?? '')
     expect(keys.length).toBeGreaterThan(40)
     for (const [locale, catalog] of Object.entries(MOBILE_CONTROL_MESSAGES)) {
@@ -452,16 +489,15 @@ describe('mobile-control localization', () => {
     expect(source).toContain("t(selfSignedSelected ? 'frpAppRequirementSelfSigned' : 'frpAppRequirement')")
     expect(source).toContain('/api/mobile-access/remote/frp/attach-plan')
     expect(source).toContain('/api/mobile-access/remote/frp/self-check')
-    // The two error-code tables plus the panel's local attach-validation table
-    // must translate attach and ingress errors in every rendered path.
-    expect(source.match(/frp_attach_mode_requires_vhost_port: 'frpAttachModeRequiresVhostPort'/gu)).toHaveLength(3)
-    expect(source.match(/frp_attach_cert_unknown: 'frpAttachCertUnknownError'/gu)).toHaveLength(3)
-    expect(source.match(/frp_entry_tls_invalid: 'frpEntryTlsInvalid'/gu)).toHaveLength(3)
-    expect(source.match(/frp_self_signed_requires_public_ipv4: 'frpSelfSignedRequiresPublicIpv4'/gu)).toHaveLength(3)
-    expect(source.match(/frp_ingress_ca_expired: 'frpIngressCaExpired'/gu)).toHaveLength(3)
-    expect(source.match(/frp_ingress_ca_invalid: 'frpIngressCaInvalid'/gu)).toHaveLength(3)
-    expect(source.match(/frp_ingress_ca_changed: 'frpIngressCaChanged'/gu)).toHaveLength(3)
-    expect(source.match(/frp_ingress_renewal_failed: 'frpIngressRenewalFailed'/gu)).toHaveLength(3)
+    // Status, attach validation, and diagnostics use the same code-to-copy table.
+    expect(source.match(/frp_attach_mode_requires_vhost_port: 'frpAttachModeRequiresVhostPort'/gu)).toHaveLength(1)
+    expect(source.match(/frp_attach_cert_unknown: 'frpAttachCertUnknownError'/gu)).toHaveLength(1)
+    expect(source.match(/frp_entry_tls_invalid: 'frpEntryTlsInvalid'/gu)).toHaveLength(1)
+    expect(source.match(/frp_self_signed_requires_public_ipv4: 'frpSelfSignedRequiresPublicIpv4'/gu)).toHaveLength(1)
+    expect(source.match(/frp_ingress_ca_expired: 'frpIngressCaExpired'/gu)).toHaveLength(1)
+    expect(source.match(/frp_ingress_ca_invalid: 'frpIngressCaInvalid'/gu)).toHaveLength(1)
+    expect(source.match(/frp_ingress_ca_changed: 'frpIngressCaChanged'/gu)).toHaveLength(1)
+    expect(source.match(/frp_ingress_renewal_failed: 'frpIngressRenewalFailed'/gu)).toHaveLength(1)
     expect(source).toContain("t('frpAttachCaExpiring'")
     expect(CONTROL_STYLES).toContain('.dsh-mobile-control__frp-hint')
     expect(CONTROL_STYLES).toContain('.dsh-mobile-control__frp-fields select')

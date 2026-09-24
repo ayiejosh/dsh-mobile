@@ -583,82 +583,111 @@ const ORIGIN_ERROR_MESSAGE_KEYS: Readonly<Record<string, string>> = {
   origin_gateway_start_failed: 'originStartFailed',
 }
 
+/** Provider failure codes shared by status, failed requests, and diagnostics. */
+const REMOTE_ERROR_MESSAGE_KEYS: Readonly<Record<string, string>> = {
+  funnel_permission_required: 'funnelPermission',
+  funnel_https_required: 'funnelHttps',
+  funnel_start_failed: 'funnelStart',
+  funnel_start_timeout: 'funnelTimeout',
+  tailscale_dns_missing: 'tailscaleDnsMissing',
+  gateway_start_failed: 'gatewayStartFailed',
+  control_channel_failed: 'controlChannelFailed',
+  cpolar_component_missing: 'cpolarMissing',
+  cpolar_component_invalid: 'cpolarInvalid',
+  cpolar_config_missing: 'cpolarConfigMissing',
+  cpolar_config_invalid: 'cpolarConfigInvalid',
+  cpolar_port_unavailable: 'cpolarPortUnavailable',
+  cpolar_launch_failed: 'cpolarLaunchFailed',
+  cpolar_start_timeout: 'cpolarTimeout',
+  cpolar_stopped: 'cpolarStopped',
+  cpolar_exited: 'cpolarExited',
+  cpolar_invalid_output: 'cpolarOutputInvalid',
+  cpolar_invalid_origin: 'cpolarOriginInvalid',
+  cloudflared_component_missing: 'cloudflaredMissing',
+  cloudflared_component_invalid: 'cloudflaredInvalid',
+  cloudflared_port_unavailable: 'cloudflaredPortUnavailable',
+  cloudflared_launch_failed: 'cloudflaredLaunchFailed',
+  cloudflared_start_timeout: 'cloudflaredTimeout',
+  cloudflared_stopped: 'cloudflaredStopped',
+  cloudflared_exited: 'cloudflaredExited',
+  cloudflared_invalid_output: 'cloudflaredOutputInvalid',
+  cloudflared_invalid_origin: 'cloudflaredOriginInvalid',
+  cloudflared_tunnel_port_unavailable: 'cloudflaredTunnelPortUnavailable',
+  cloudflared_tunnel_hostname_invalid: 'cloudflaredTunnelHostnameInvalid',
+  cloudflared_tunnel_port_invalid: 'cloudflaredTunnelPortInvalid',
+  cloudflared_tunnel_port_reserved: 'cloudflaredTunnelPortReserved',
+  cloudflared_tunnel_token_invalid: 'cloudflaredTunnelTokenInvalid',
+  cloudflared_tunnel_settings_invalid: 'cloudflaredTunnelSettingsInvalid',
+  cloudflared_tunnel_config_missing: 'cloudflaredTunnelConfigMissing',
+  cloudflared_tunnel_config_invalid: 'cloudflaredTunnelInvalid',
+  cloudflared_tunnel_target_invalid: 'cloudflaredTunnelTargetInvalid',
+  cloudflared_component_unsupported: 'cloudflaredComponentUnsupported',
+  cloudflared_download_hash_mismatch: 'cloudflaredDownloadHashMismatch',
+  cloudflared_download_size_mismatch: 'cloudflaredDownloadSizeMismatch',
+  cloudflared_executable_hash_mismatch: 'cloudflaredExecutableHashMismatch',
+  cloudflared_download_redirect_missing: 'cloudflaredDownloadRedirectMissing',
+  cloudflared_download_redirect_invalid: 'cloudflaredDownloadRedirectInvalid',
+  cloudflared_download_redirect_rejected: 'cloudflaredDownloadRedirectRejected',
+  cloudflared_port_reservation_failed: 'cloudflaredPortReservationFailed',
+  frp_component_missing: 'frpMissing',
+  frp_component_invalid: 'frpInvalid',
+  frp_config_missing: 'frpConfigMissing',
+  frp_config_verify_failed: 'frpConfigVerifyFailed',
+  frp_vhost_publicly_reachable: 'frpVhostPublic',
+  frp_vhost_probe_failed: 'frpVhostProbeFailed',
+  frp_launch_failed: 'frpLaunchFailed',
+  frp_start_timeout: 'frpTimeout',
+  frp_discovery_mismatch: 'frpDiscoveryMismatch',
+  frp_discovery_invalid: 'frpDiscoveryInvalid',
+  frp_stopped: 'frpStopped',
+  frp_exited: 'frpExited',
+  frp_attach_mode_requires_vhost_port: 'frpAttachModeRequiresVhostPort',
+  frp_attach_cert_unknown: 'frpAttachCertUnknownError',
+  frp_entry_tls_invalid: 'frpEntryTlsInvalid',
+  frp_self_signed_requires_public_ipv4: 'frpSelfSignedRequiresPublicIpv4',
+  frp_ingress_ca_expired: 'frpIngressCaExpired',
+  frp_ingress_ca_invalid: 'frpIngressCaInvalid',
+  frp_ingress_ca_changed: 'frpIngressCaChanged',
+  frp_ingress_renewal_failed: 'frpIngressRenewalFailed',
+  ...ORIGIN_ERROR_MESSAGE_KEYS,
+}
+
+const DIAGNOSTIC_CONTROLLER_ACTION_OVERRIDES: Readonly<Record<string, string>> = {
+  component_missing: 'remoteUnavailableTailscale',
+  sidecar_launch_failed: 'remoteUnavailableTailscale',
+  sidecar_stopped: 'controlChannelFailed',
+  sidecar_exited: 'controlChannelFailed',
+}
+
+/** Only codes with a specific diagnostic action use the status message key. */
+const DIAGNOSTIC_CONTROLLER_ACTION_CODES: ReadonlySet<string> = new Set([
+  ...Object.keys(ORIGIN_ERROR_MESSAGE_KEYS),
+  'funnel_permission_required', 'funnel_https_required', 'funnel_start_failed', 'funnel_start_timeout',
+  'tailscale_dns_missing', 'control_channel_failed', 'gateway_start_failed',
+  'cpolar_component_missing', 'cpolar_component_invalid', 'cpolar_config_missing', 'cpolar_config_invalid',
+  'cpolar_start_timeout', 'cpolar_stopped', 'cpolar_exited',
+  'cloudflared_component_missing', 'cloudflared_component_invalid', 'cloudflared_component_unsupported',
+  'cloudflared_port_unavailable', 'cloudflared_port_reservation_failed', 'cloudflared_launch_failed',
+  'cloudflared_start_timeout', 'cloudflared_stopped', 'cloudflared_exited', 'cloudflared_invalid_origin',
+  'cloudflared_tunnel_port_unavailable', 'cloudflared_tunnel_config_invalid', 'cloudflared_tunnel_target_invalid',
+  'cloudflared_download_hash_mismatch', 'cloudflared_download_size_mismatch', 'cloudflared_executable_hash_mismatch',
+  'frp_component_missing', 'frp_component_invalid', 'frp_config_missing', 'frp_config_verify_failed',
+  'frp_vhost_publicly_reachable', 'frp_vhost_probe_failed', 'frp_launch_failed', 'frp_start_timeout',
+  'frp_discovery_mismatch', 'frp_discovery_invalid', 'frp_stopped', 'frp_exited',
+  'frp_attach_mode_requires_vhost_port', 'frp_attach_cert_unknown', 'frp_entry_tls_invalid',
+  'frp_self_signed_requires_public_ipv4', 'frp_ingress_ca_expired', 'frp_ingress_ca_invalid',
+  'frp_ingress_ca_changed', 'frp_ingress_renewal_failed',
+])
+
+/** Resolve the next-step text for a remote-controller diagnostic. */
+export function diagnosticControllerAction(code: unknown, locale: MobileControlLocale, fallback: string): string {
+  if (typeof code !== 'string') return fallback
+  const key = DIAGNOSTIC_CONTROLLER_ACTION_OVERRIDES[code]
+    ?? (DIAGNOSTIC_CONTROLLER_ACTION_CODES.has(code) ? REMOTE_ERROR_MESSAGE_KEYS[code] : undefined)
+  return key === undefined ? fallback : controlTranslator(locale)(key)
+}
+
 function installControl(): { remove: () => void; toggle: () => void; isOpen: () => boolean } {
-  /**
-   * Provider failure codes to message keys.
-   *
-   * Kept as keys rather than translated text so the same table can serve both the
-   * status repaint and a failed request: a server rejection carries its code in
-   * `error.message`, and showing that raw would print `Error: cloudflared_...` in
-   * every language while the translated sentence sat unreachable.
-   */
-  const REMOTE_ERROR_MESSAGE_KEYS: Readonly<Record<string, string>> = {
-    funnel_permission_required: 'funnelPermission',
-    funnel_https_required: 'funnelHttps',
-    funnel_start_failed: 'funnelStart',
-    funnel_start_timeout: 'funnelTimeout',
-    tailscale_dns_missing: 'tailscaleDnsMissing',
-    gateway_start_failed: 'gatewayStartFailed',
-    control_channel_failed: 'controlChannelFailed',
-    cpolar_component_missing: 'cpolarMissing',
-    cpolar_component_invalid: 'cpolarInvalid',
-    cpolar_config_missing: 'cpolarConfigMissing',
-    cpolar_config_invalid: 'cpolarConfigInvalid',
-    cpolar_port_unavailable: 'cpolarPortUnavailable',
-    cpolar_launch_failed: 'cpolarLaunchFailed',
-    cpolar_start_timeout: 'cpolarTimeout',
-    cpolar_stopped: 'cpolarStopped',
-    cpolar_exited: 'cpolarExited',
-    cpolar_invalid_output: 'cpolarOutputInvalid',
-    cpolar_invalid_origin: 'cpolarOriginInvalid',
-    cloudflared_component_missing: 'cloudflaredMissing',
-    cloudflared_component_invalid: 'cloudflaredInvalid',
-    cloudflared_port_unavailable: 'cloudflaredPortUnavailable',
-    cloudflared_launch_failed: 'cloudflaredLaunchFailed',
-    cloudflared_start_timeout: 'cloudflaredTimeout',
-    cloudflared_stopped: 'cloudflaredStopped',
-    cloudflared_exited: 'cloudflaredExited',
-    cloudflared_invalid_output: 'cloudflaredOutputInvalid',
-    cloudflared_invalid_origin: 'cloudflaredOriginInvalid',
-    cloudflared_tunnel_port_unavailable: 'cloudflaredTunnelPortUnavailable',
-    cloudflared_tunnel_hostname_invalid: 'cloudflaredTunnelHostnameInvalid',
-    cloudflared_tunnel_port_invalid: 'cloudflaredTunnelPortInvalid',
-    cloudflared_tunnel_port_reserved: 'cloudflaredTunnelPortReserved',
-    cloudflared_tunnel_token_invalid: 'cloudflaredTunnelTokenInvalid',
-    cloudflared_tunnel_settings_invalid: 'cloudflaredTunnelSettingsInvalid',
-    cloudflared_tunnel_config_missing: 'cloudflaredTunnelConfigMissing',
-    cloudflared_tunnel_config_invalid: 'cloudflaredTunnelInvalid',
-    cloudflared_tunnel_target_invalid: 'cloudflaredTunnelTargetInvalid',
-    cloudflared_component_unsupported: 'cloudflaredComponentUnsupported',
-    cloudflared_download_hash_mismatch: 'cloudflaredDownloadHashMismatch',
-    cloudflared_download_size_mismatch: 'cloudflaredDownloadSizeMismatch',
-    cloudflared_executable_hash_mismatch: 'cloudflaredExecutableHashMismatch',
-    cloudflared_download_redirect_missing: 'cloudflaredDownloadRedirectMissing',
-    cloudflared_download_redirect_invalid: 'cloudflaredDownloadRedirectInvalid',
-    cloudflared_download_redirect_rejected: 'cloudflaredDownloadRedirectRejected',
-    cloudflared_port_reservation_failed: 'cloudflaredPortReservationFailed',
-    frp_component_missing: 'frpMissing',
-    frp_component_invalid: 'frpInvalid',
-    frp_config_missing: 'frpConfigMissing',
-    frp_config_verify_failed: 'frpConfigVerifyFailed',
-    frp_vhost_publicly_reachable: 'frpVhostPublic',
-    frp_vhost_probe_failed: 'frpVhostProbeFailed',
-    frp_launch_failed: 'frpLaunchFailed',
-    frp_start_timeout: 'frpTimeout',
-    frp_discovery_mismatch: 'frpDiscoveryMismatch',
-    frp_discovery_invalid: 'frpDiscoveryInvalid',
-    frp_stopped: 'frpStopped',
-    frp_exited: 'frpExited',
-    frp_attach_mode_requires_vhost_port: 'frpAttachModeRequiresVhostPort',
-    frp_attach_cert_unknown: 'frpAttachCertUnknownError',
-    frp_entry_tls_invalid: 'frpEntryTlsInvalid',
-    frp_self_signed_requires_public_ipv4: 'frpSelfSignedRequiresPublicIpv4',
-    frp_ingress_ca_expired: 'frpIngressCaExpired',
-    frp_ingress_ca_invalid: 'frpIngressCaInvalid',
-    frp_ingress_ca_changed: 'frpIngressCaChanged',
-    frp_ingress_renewal_failed: 'frpIngressRenewalFailed',
-    ...ORIGIN_ERROR_MESSAGE_KEYS,
-  }
 
   /** The table above, translated, for the status repaint. */
   const translatedRemoteErrors = (): Record<string, string> =>
@@ -2119,17 +2148,7 @@ function installControl(): { remove: () => void; toggle: () => void; isOpen: () 
     void navigator.clipboard.writeText(createFrpServerTemplateForClipboard(form.serverPort, form.token, form.publicOrigin))
       .then(() => { remoteStatus.textContent = t('templateCopied') }, () => { remoteStatus.textContent = t('templateCopyFailed') })
   })
-  const frpAttachErrorKeys: Readonly<Record<string, string>> = {
-    frp_attach_mode_requires_vhost_port: 'frpAttachModeRequiresVhostPort',
-    frp_attach_cert_unknown: 'frpAttachCertUnknownError',
-    frp_entry_tls_invalid: 'frpEntryTlsInvalid',
-    frp_self_signed_requires_public_ipv4: 'frpSelfSignedRequiresPublicIpv4',
-    frp_ingress_ca_expired: 'frpIngressCaExpired',
-    frp_ingress_ca_invalid: 'frpIngressCaInvalid',
-    frp_ingress_ca_changed: 'frpIngressCaChanged',
-    frp_ingress_renewal_failed: 'frpIngressRenewalFailed',
-  }
-  const frpAttachErrorText = (code: string): string => t(frpAttachErrorKeys[code] ?? 'frpInputInvalid')
+  const frpAttachErrorText = (code: string): string => t(REMOTE_ERROR_MESSAGE_KEYS[code] ?? 'frpInputInvalid')
   const showFrpAttachError = (code: string): void => {
     const message = frpAttachErrorText(code)
     if (code === 'frp_attach_mode_requires_vhost_port') {
@@ -2781,18 +2800,7 @@ function installControl(): { remove: () => void; toggle: () => void; isOpen: () 
           detail += ` plugin ${String(versions.plugin)}, DSH ${String(versions.dsh)}, Android ${String(versions.minimumAndroidApp)}.`
         }
       }
-      if (reason === 'remote-controller-error') {
-        const controllerActionKeys: Readonly<Record<string, string>> = {
-          ...ORIGIN_ERROR_MESSAGE_KEYS,
-          component_missing: 'remoteUnavailableTailscale', funnel_permission_required: 'funnelPermission', funnel_https_required: 'funnelHttps', funnel_start_failed: 'funnelStart', funnel_start_timeout: 'funnelTimeout', tailscale_dns_missing: 'tailscaleDnsMissing',
-          sidecar_launch_failed: 'remoteUnavailableTailscale', sidecar_stopped: 'controlChannelFailed', sidecar_exited: 'controlChannelFailed', control_channel_failed: 'controlChannelFailed',
-          cpolar_component_missing: 'cpolarMissing', cpolar_component_invalid: 'cpolarInvalid', cpolar_config_missing: 'cpolarConfigMissing', cpolar_config_invalid: 'cpolarConfigInvalid', cpolar_start_timeout: 'cpolarTimeout', cpolar_stopped: 'cpolarStopped', cpolar_exited: 'cpolarExited',
-          cloudflared_component_missing: 'cloudflaredMissing', cloudflared_component_invalid: 'cloudflaredInvalid', cloudflared_component_unsupported: 'cloudflaredComponentUnsupported', cloudflared_port_unavailable: 'cloudflaredPortUnavailable', cloudflared_port_reservation_failed: 'cloudflaredPortReservationFailed', cloudflared_launch_failed: 'cloudflaredLaunchFailed', cloudflared_start_timeout: 'cloudflaredTimeout', cloudflared_stopped: 'cloudflaredStopped', cloudflared_exited: 'cloudflaredExited', cloudflared_invalid_origin: 'cloudflaredOriginInvalid', cloudflared_tunnel_port_unavailable: 'cloudflaredTunnelPortUnavailable', cloudflared_tunnel_config_invalid: 'cloudflaredTunnelInvalid', cloudflared_tunnel_target_invalid: 'cloudflaredTunnelTargetInvalid', cloudflared_download_hash_mismatch: 'cloudflaredDownloadHashMismatch', cloudflared_download_size_mismatch: 'cloudflaredDownloadSizeMismatch', cloudflared_executable_hash_mismatch: 'cloudflaredExecutableHashMismatch',
-          frp_component_missing: 'frpMissing', frp_component_invalid: 'frpInvalid', frp_config_missing: 'frpConfigMissing', frp_config_verify_failed: 'frpConfigVerifyFailed', frp_vhost_publicly_reachable: 'frpVhostPublic', frp_vhost_probe_failed: 'frpVhostProbeFailed', frp_launch_failed: 'frpLaunchFailed', frp_start_timeout: 'frpTimeout', frp_discovery_mismatch: 'frpDiscoveryMismatch', frp_discovery_invalid: 'frpDiscoveryInvalid', frp_stopped: 'frpStopped', frp_exited: 'frpExited', gateway_start_failed: 'gatewayStartFailed', frp_attach_mode_requires_vhost_port: 'frpAttachModeRequiresVhostPort', frp_attach_cert_unknown: 'frpAttachCertUnknownError', frp_entry_tls_invalid: 'frpEntryTlsInvalid', frp_self_signed_requires_public_ipv4: 'frpSelfSignedRequiresPublicIpv4', frp_ingress_ca_expired: 'frpIngressCaExpired', frp_ingress_ca_invalid: 'frpIngressCaInvalid', frp_ingress_ca_changed: 'frpIngressCaChanged', frp_ingress_renewal_failed: 'frpIngressRenewalFailed',
-        }
-        const actionKey = controllerActionKeys[values.controllerCode ?? '']
-        if (actionKey !== undefined) action = t(actionKey)
-      }
+      if (reason === 'remote-controller-error') action = diagnosticControllerAction(facts.controllerCode, locale, action)
       return { detail, action }
     }
     const appendGroup = (label: string, groupEntries: Record<string, unknown>[]): void => {

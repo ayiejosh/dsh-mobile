@@ -2,9 +2,9 @@
 
 [English guide](SELF_HOSTED_FRP.en.md)
 
-本页介绍已发布的托管部署（插件安装 frps 与 Caddy）。接入你已运行的 frps 是**待发布**功能；0.4.5 插件和 App 尚不支持该入口。
+本页介绍托管部署（插件安装 frps 与 Caddy）。
 
-> **已经有一台跑着 frps 的 VPS？** 见 [接入你既有的 frps](ATTACH_EXISTING_FRPS.md)：
+> **已经有一台跑着 frps 的 VPS？** 从 0.4.6 起可直接接入，见 [接入你既有的 frps](ATTACH_EXISTING_FRPS.md)：
 > 插件不装不改你的 frps、**零 SSH**；还提供**完全不用公开证书**的自签穿透档（frps 只做 TCP 透传，
 > 网关自己终止 TLS，证书有效期与更换要求见专门指南）。
 
@@ -24,7 +24,7 @@
 - **域名模式**：公开地址是自己的域名，Caddy 自动申请并续期证书。
 - **公网 IPv4 模式**：公开地址直接是 VPS 公网 IPv4（例如你自己的 VPS 地址），插件用 Certbot 申请约 6 天有效的 Let's Encrypt IP 证书，并安装每日自动续期定时器。注意：文档示例地址（如 `203.0.113.10`）和内网、保留地址会被拒绝，必须填写真实可路由的公网 IP。
 
-本页的公开证书入口需要 Android App 0.3.3 或更高版本（远程自定义入口）。待发布的自签穿透档还需要包含远程 CA 固定功能的新版 App，已发布的 0.4.5 及更早 App 不支持该档。旧版 App 仍可使用局域网、cpolar 和 Tailscale。
+本页的公开证书入口需要 Android App 0.3.3 或更高版本（远程自定义入口）。自签穿透档需要 0.4.6 Android App 固定远程 CA；旧版 App 不支持该档，仍可使用局域网、cpolar 和 Tailscale。
 
 ## 手动部署 vs 自动部署
 

@@ -4,16 +4,22 @@ const commands = vi.hoisted(() => ({
   exec: vi.fn(),
   chmod: vi.fn().mockResolvedValue(undefined),
 }))
+const nativeWhoami = 'C:\\Windows\\System32\\whoami.exe'
+const nativeIcacls = 'C:\\Windows\\System32\\icacls.exe'
 vi.mock('node:child_process', () => ({ execFile: commands.exec }))
 vi.mock('node:fs/promises', () => ({ chmod: commands.chmod }))
 
 beforeEach(() => {
   vi.resetModules()
-  vi.stubGlobal('process', { ...process, platform: 'win32' })
+  vi.stubGlobal('process', {
+    ...process,
+    platform: 'win32',
+    env: { ...process.env, SystemRoot: 'C:\\Windows', WINDIR: 'C:\\OtherWindows', PATH: 'C:\\Program Files\\Git\\usr\\bin' },
+  })
   commands.exec.mockReset()
   commands.chmod.mockClear()
   commands.exec.mockImplementation((file, _args, _options, callback) => {
-    callback(null, file === 'whoami.exe' ? '"desktop\\user","S-1-5-21-123-456-789-1001"\r\n' : '', '')
+    callback(null, file === nativeWhoami ? '"desktop\\user","S-1-5-21-123-456-789-1001"\r\n' : '', '')
   })
 })
 afterEach(() => { vi.unstubAllGlobals() })
@@ -23,11 +29,11 @@ describe('Windows private files under a desktop execFile wrapper', () => {
     const { restrictPrivateFile } = await import('../src/private-file.js')
     await restrictPrivateFile('fixture.json')
     expect(commands.chmod).toHaveBeenCalledWith('fixture.json', 0o600)
-    expect(commands.exec).toHaveBeenLastCalledWith('icacls.exe', expect.arrayContaining([
+    expect(commands.exec).toHaveBeenLastCalledWith(nativeIcacls, expect.arrayContaining([
       'fixture.json', '/inheritance:r', '*S-1-5-21-123-456-789-1001:(F)', '/remove:g', '*S-1-1-0',
     ]), expect.objectContaining({ timeout: 10_000, windowsHide: true }), expect.any(Function))
     await restrictPrivateFile('second.json')
-    expect(commands.exec.mock.calls.filter(call => call[0] === 'whoami.exe')).toHaveLength(1)
+    expect(commands.exec.mock.calls.filter(call => call[0] === nativeWhoami)).toHaveLength(1)
   })
 
   it('rejects an invalid SID without running icacls and retries on the next request', async () => {
@@ -41,9 +47,16 @@ describe('Windows private files under a desktop execFile wrapper', () => {
 
   it('does not report success when applying the ACL fails', async () => {
     commands.exec.mockImplementation((file, _args, _options, callback) => {
-      callback(file === 'icacls.exe' ? new Error('ACL denied') : null, '"user","S-1-5-21-123"', '')
+      callback(file === nativeIcacls ? new Error('ACL denied') : null, '"user","S-1-5-21-123"', '')
     })
     const { restrictPrivateFile } = await import('../src/private-file.js')
     await expect(restrictPrivateFile('fixture.json')).rejects.toThrow('ACL denied')
+  })
+
+  it('fails closed if Windows does not identify its system directory', async () => {
+    vi.stubGlobal('process', { ...process, platform: 'win32', env: { PATH: 'C:\\Program Files\\Git\\usr\\bin' } })
+    const { restrictPrivateFile } = await import('../src/private-file.js')
+    await expect(restrictPrivateFile('fixture.json')).rejects.toThrow('Windows system root is unavailable')
+    expect(commands.exec).not.toHaveBeenCalled()
   })
 })
