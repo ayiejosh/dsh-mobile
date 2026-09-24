@@ -9,6 +9,7 @@ const repository = fileURLToPath(new URL('..', import.meta.url))
 const dshBin = process.env.DSH_BOOT_SMOKE_BIN
   ?? fileURLToPath(new URL('../node_modules/@deepseek-ai/dsh/lib/bin.js', import.meta.url))
 const injectedFailure = process.argv.includes('--negative-control')
+const blockedRemoteMux = process.argv.includes('--negative-control-mux')
 const startedAt = Date.now()
 const START_TIMEOUT_MS = 90_000
 const CLIENT_TIMEOUT_MS = 60_000
@@ -41,6 +42,47 @@ function sanitized(output) {
     .replace(/([?&]token=)[^\s&]+/gu, '$1<redacted>')
     .replace(/(#key=)[^\s]+/gu, '$1<redacted>')
     .slice(-12_000)
+}
+
+function observeWorkspaceStream(page) {
+  const state = { sockets: 0, closed: 0, sentOpens: [], receivedFrames: 0, socketErrors: [] }
+  let resolveBaseline
+  const baseline = new Promise(resolve => { resolveBaseline = resolve })
+  page.on('websocket', socket => {
+    if (new URL(socket.url()).pathname !== '/api/remote.mux') return
+    state.sockets++
+    const streams = new Map()
+    socket.on('framesent', frame => {
+      let message
+      try { message = JSON.parse(String(frame.payload)) } catch { return }
+      if (message?.type !== 'open' || typeof message.streamId !== 'string' || typeof message.endpoint !== 'string') return
+      streams.set(message.streamId, message.endpoint)
+      if (state.sentOpens.length < 12) state.sentOpens.push(message.endpoint)
+    })
+    socket.on('framereceived', frame => {
+      state.receivedFrames++
+      let message
+      try { message = JSON.parse(String(frame.payload)) } catch { return }
+      if (message?.type !== 'item' || streams.get(message.streamId) !== 'workspace/follow') return
+      const value = message.value
+      if (value?.type !== 'baseline' || !Array.isArray(value.value?.items)
+        || !Array.isArray(value.value.archivedSessionIds) || !Array.isArray(value.value.pinnedSessionIds)) return
+      resolveBaseline({ workspaces: value.value.items.length, socket })
+    })
+    socket.on('socketerror', error => { if (state.socketErrors.length < 8) state.socketErrors.push(String(error)) })
+    socket.on('close', () => { state.closed++ })
+  })
+  return { baseline, state }
+}
+
+async function within(promise, timeoutMs, failure) {
+  let timer
+  try {
+    return await Promise.race([
+      promise,
+      new Promise((_resolve, reject) => { timer = setTimeout(() => reject(new Error(failure())), timeoutMs) }),
+    ])
+  } finally { clearTimeout(timer) }
 }
 
 async function createProfile(root) {
@@ -163,6 +205,7 @@ async function inspectBrowser(baseUrl, logs) {
     }
 
     const phone = await browser.newPage({ viewport: { width: 390, height: 844 }, isMobile: true, hasTouch: true })
+    const workspaceStream = observeWorkspaceStream(phone)
     const errors = []
     const failedBundles = []
     const failedRequests = []
@@ -187,6 +230,9 @@ async function inspectBrowser(baseUrl, logs) {
         } else await route.continue()
       })
     }
+    if (blockedRemoteMux) {
+      await phone.routeWebSocket('**/api/remote.mux', socket => { socket.close() })
+    }
     await phone.goto(pairing.body.pairUrl, { waitUntil: 'domcontentloaded' })
     await phone.locator('#pair-form button').click()
     await phone.waitForURL(url => url.pathname === '/', { timeout: 15_000 })
@@ -204,6 +250,14 @@ async function inspectBrowser(baseUrl, logs) {
       const root = await phone.locator('#root').evaluate(element => ({ text: element.textContent?.slice(0, 500), html: element.innerHTML.slice(0, 500) })).catch(() => undefined)
       throw new Error(`Mobile client did not mount after pairing: ${String(error)}\nurl=${new URL(phone.url()).pathname}\nboot=${sanitized(JSON.stringify(boot))}\nroot=${sanitized(JSON.stringify(root))}\nerrors=${sanitized(JSON.stringify(errors))}\nfailedBundles=${sanitized(JSON.stringify(failedBundles))}\nfailedRequests=${sanitized(JSON.stringify(failedRequests))}\nresponses=${sanitized(JSON.stringify(responses))}\n${logs()}`)
     }
+    const workspace = await within(
+      workspaceStream.baseline,
+      blockedRemoteMux ? 10_000 : CLIENT_TIMEOUT_MS,
+      () => `DSH Workspace stream did not receive an opening baseline over /api/remote.mux: ${sanitized(JSON.stringify(workspaceStream.state))}\nerrors=${sanitized(JSON.stringify(errors))}\n${logs()}`,
+    )
+    if (workspace.socket.isClosed()) {
+      throw new Error(`DSH Workspace stream closed after its opening baseline: ${sanitized(JSON.stringify(workspaceStream.state))}\n${logs()}`)
+    }
     const bootFailures = await phone.getByText('Failed to load plugins').count()
     if (bootFailures > 0 || failedBundles.length > 0 || errors.some(error => /Failed to load plugins|failed to import|node:net|ERR_UNSUPPORTED/u.test(error))) {
       throw new Error(`Mobile client import failed: errors=${sanitized(JSON.stringify(errors))} bundles=${sanitized(JSON.stringify(failedBundles))}\n${logs()}`)
@@ -215,7 +269,7 @@ async function inspectBrowser(baseUrl, logs) {
     }
     const mobileFrontend = await phone.evaluate(() => window.__DSH_MOBILE_FRONTEND__)
     if (mobileFrontend !== 'dedicated') throw new Error('Mobile gateway did not select the dedicated frontend')
-    console.log(`Mobile client mounted through DSH Loader (${String(plan.entries.length)} plugin entries, ${Date.now() - startedAt} ms)`)
+    console.log(`Mobile client mounted through DSH Loader and read ${String(workspace.workspaces)} Workspaces over /api/remote.mux (${String(plan.entries.length)} plugin entries, ${Date.now() - startedAt} ms)`)
   } finally {
     await browser.close()
   }

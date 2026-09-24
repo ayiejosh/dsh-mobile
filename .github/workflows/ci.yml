@@ -26,8 +26,12 @@ jobs:
       - run: node mobile/scripts/check-dsh-compatibility.mjs dsh
 
   mobile-client-boot:
-    name: DSH Mobile browser boot
+    name: DSH Mobile browser boot (${{ matrix.dsh }})
     runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        dsh: [0.1.7-alpha.2, 0.1.7-rc.1]
     steps:
       - uses: actions/checkout@v7
       - uses: actions/setup-node@v7
@@ -36,8 +40,10 @@ jobs:
           cache: npm
       - run: npm ci
       - run: npm run build
-      - name: Install the matching released DSH Web runtime
-        run: npm install --no-save --package-lock=false @deepseek-ai/dsh@0.1.7-alpha.2
+      - name: Install the released DSH Web runtime
+        run: |
+          npm install --prefix "$RUNNER_TEMP/dsh-runtime" --no-save --package-lock=false "@deepseek-ai/dsh@${{ matrix.dsh }}"
+          echo "DSH_BOOT_SMOKE_BIN=$RUNNER_TEMP/dsh-runtime/node_modules/@deepseek-ai/dsh/lib/bin.js" >> "$GITHUB_ENV"
       - run: npx playwright install --with-deps chromium --only-shell
       - run: npm run smoke:dsh-boot
 
