@@ -4,9 +4,9 @@ GitHub 的 [Contributors 图表](https://github.com/saya-ch/dsh-mobile/graphs/co
 
 GitHub's Contributors graph counts commits on the default branch; issue reports and PR proposals cannot be manually added to it. This page credits community members by how they contributed, through 2026-09-24. The repository maintainer and automated dependency updates remain visible in GitHub's history.
 
-## 待发布的代码贡献 / Unreleased code contributions
+## 0.4.6 候选版的代码贡献 / 0.4.6 candidate code contributions
 
-本次待发布变更保留以下 PR 原作者的代码提交；GitHub 的贡献者图表以进入默认分支的提交历史为准。这些改动不属于已发布的 0.4.5。 / This unreleased change retains the original authors' PR commits. GitHub's Contributors graph follows commit history on the default branch; none of this work is part of the published 0.4.5 release.
+0.4.6 候选版保留以下 PR 原作者的代码提交；GitHub 的贡献者图表以进入默认分支的提交历史为准。这些改动尚未发布，亦不属于已发布的 0.4.5。 / The 0.4.6 candidate retains the original authors' PR commits. GitHub's Contributors graph follows commit history on the default branch; this work is not yet released and is not part of 0.4.5.
 
 | 社区成员 / Community member | 代码贡献 / Code contribution |
 | --- | --- |

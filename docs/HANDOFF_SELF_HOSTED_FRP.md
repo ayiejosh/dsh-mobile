@@ -1,6 +1,6 @@
 # 自建 FRP 维护说明
 
-既有 frps 接入与自签入口目前仅在本地集成分支，未包含在已发布的 0.4.5 插件与 App 中；下文的 2026-09-03 真机记录只验证托管部署的公开证书 IP 档，不是 attach 档验收结果。
+既有 frps 接入与自签入口属于 0.4.6 候选版，未包含在已发布的 0.4.5 插件与 App 中；自签档需要 0.4.6 Android App。下文的 2026-09-03 真机记录只验证托管部署的公开证书 IP 档，不是 attach 档验收结果。
 
 面向维护者。用户文档见 [SELF_HOSTED_FRP.md](SELF_HOSTED_FRP.md)；「接入既有 frps + 自签穿透」用户指南见
 [ATTACH_EXISTING_FRPS.md](ATTACH_EXISTING_FRPS.md)。
@@ -20,7 +20,7 @@
 | frpc proxy 类型 | `type = "http"` + `customDomains` | `type = "tcp"` + `remotePort = publicPort` |
 | 证书来源 | 域名由 Caddy 自动管理；公网 IPv4 用 Let's Encrypt 短期证书（约 6 天） | 网关自签 CA（5 年）+ 叶证书（397 天）；需监控到期并处理 CA 轮换与重新配对 |
 | App 信任 | 系统信任库（公开 CA） | 固定网关 CA（`GET /mobile-access/ca.cer`） |
-| 手机浏览器 | 正常 | 提示证书不受信任；仅包含远程 CA 固定功能的新版 App 可扫码使用 |
+| 手机浏览器 | 正常 | 提示证书不受信任；仅 0.4.6 及更新 App 可在明确配对后使用该自签入口 |
 
 ## 代码地图
 

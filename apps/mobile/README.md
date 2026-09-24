@@ -6,7 +6,7 @@ DeepSeek Harness is the display name of this lightweight, community-maintained A
 
 Android is the only supported native target. The iOS client remains an unpublished local experiment and is outside the build, release, and support scope.
 
-> **Unreleased integration:** attaching to an existing frps with a self-signed HTTPS entry requires a new Android app that pins the remote gateway CA. The published 0.4.5 app does not support that entry; its existing LAN and publicly trusted remote connections remain available.
+> **0.4.6 candidate, not released:** attaching to an existing frps with a self-signed HTTPS entry requires the 0.4.6 Android app to pin the remote gateway CA. The downloadable 0.4.5 app cannot use that entry; its existing LAN and publicly trusted remote connections remain available.
 
 ## Use the app
 
@@ -16,7 +16,7 @@ Android is the only supported native target. The iOS client remains an unpublish
 4. For LAN, create a key or pairing link under **Mobile Access → Local network**. For remote access, configure a provider and create the remote pairing QR code. Scan the corresponding QR code or paste its link in the app.
 5. The two paths store separate device credentials. LAN pins its private CA in the app, while released remote providers use platform-trusted public HTTPS certificates; neither requires a provider app on the phone.
 
-The published self-hosted FRP path uses a public-CA HTTPS domain or IPv4 origin and requires Android app 0.3.3 or later. The unreleased existing-frps path can use the same public-CA pairing, or a public-IPv4 self-signed entry that only the new remote-CA-pinning app can pair. See [Attach to an existing frps](../../docs/ATTACH_EXISTING_FRPS.en.md); older supported apps continue to work with LAN, cpolar, and Tailscale Funnel.
+The published self-hosted FRP path uses a public-CA HTTPS domain or IPv4 origin and requires Android app 0.3.3 or later. The 0.4.6 candidate's existing-frps path can use the same public-CA pairing, or a public-IPv4 self-signed entry that requires the 0.4.6 app. See the [candidate attachment guide](../../docs/ATTACH_EXISTING_FRPS.en.md); older supported apps continue to work with LAN, cpolar, and Tailscale Funnel.
 
 See the [self-hosted FRP guide](../../docs/SELF_HOSTED_FRP.en.md) for manual and automatic VPS deployment, host-key verification, cleanup, and troubleshooting.
 
@@ -26,7 +26,7 @@ Before pairing, the app reads separate version metadata to distinguish an outdat
 
 Discovery listens to DNS-SD/mDNS and periodic UDP announcements at the same time, sends an active UDP query on port `3443`, and retains bounded HTTPS scans of visible private Wi-Fi and phone-hotspot `/24` networks as a compatibility fallback. Every discovery path carries metadata only and results are merged by stable installation identifier, so a changed address updates the existing device. The first screen offers **Scan QR code** (point the camera at the screen to pair without a key), Scan, a result list, and a manual address field (enter `https://IP:port` to connect when discovery fails, e.g. across subnets, on a non-default port, or behind a firewall); select one DSH before entering its key. For a browser's first connection, open the **Copy pairing link** link on the phone (the pairing code is prefilled), or visit `/mobile-access/pair` on the shown HTTPS origin and enter the 43-character pairing code after the generated key's final dot.
 
-The private CA is not discovery data. After explicit LAN pairing or unreleased self-signed FRP pairing, Android retrieves the gateway CA from the chosen HTTPS Origin without sending a device credential, checks its validity and SHA-256 fingerprint against the pairing key, and stores it with the encrypted device credential. Native requests and WebView then trust only a valid leaf signed by that pinned CA for the exact Origin; other TLS errors are cancelled. For a public-CA remote entry, the gateway serves no private CA and Android uses platform trust instead. A leaf renewed under the same CA needs no re-pairing; an expired, replaced, or mismatched CA must never be silently accepted and requires a new pairing. No private CA is installed in Android's system trust settings.
+The private CA is not discovery data. After explicit LAN pairing or self-signed FRP pairing in the 0.4.6 candidate, Android retrieves the gateway CA from the chosen HTTPS Origin without sending a device credential, checks its validity and SHA-256 fingerprint against the pairing key, and stores it with the encrypted device credential. Native requests and WebView then trust only a valid leaf signed by that pinned CA for the exact Origin; other TLS errors are cancelled. For a public-CA remote entry, the gateway serves no private CA and Android uses platform trust instead. A leaf renewed under the same CA needs no re-pairing; an expired, replaced, or mismatched CA must never be silently accepted and requires a new pairing. No private CA is installed in Android's system trust settings.
 
 ## Why use the app
 
@@ -35,14 +35,14 @@ The private CA is not discovery data. After explicit LAN pairing or unreleased s
 - File selection, same-origin downloads, sharing, and site-data clearing use narrow native implementations.
 - The app remains a shell around the same Web UI and protocol used by browsers.
 
-A mobile browser remains an alternative for LAN and publicly trusted remote entries. The unreleased self-signed FRP entry is intended for the new Android app: ordinary browsers do not trust its private CA automatically.
+A mobile browser remains an alternative for LAN and publicly trusted remote entries. The candidate self-signed FRP entry requires the 0.4.6 Android app: ordinary browsers do not trust its private CA automatically.
 
 ## Security properties
 
 | Control | Android behavior |
 | --- | --- |
 | Transport | HTTPS origins only; cleartext traffic is disabled. |
-| TLS | LAN and the unreleased self-signed FRP entry pin the pairing-key CA privately and accept only an otherwise-untrusted, valid leaf for the exact Origin. Public-CA remote entries use platform trust; every other TLS error is cancelled. |
+| TLS | LAN pins its pairing-key CA privately. The candidate self-signed FRP entry also requires a remote CA pin in the 0.4.6 app. Both accept only an otherwise-untrusted, valid leaf for the exact Origin. Public-CA remote entries use platform trust; every other TLS error is cancelled. |
 | Origin | Only scheme, normalized host, and port persist. Ordinary paths, queries, and fragments do not. |
 | Navigation | Same-origin main frames stay inside; user-initiated external HTTPS links open in the system browser. |
 | Permissions | File input uses the system document picker without storage permission; camera permission is requested only when the user starts QR scanning or photo capture. |
@@ -50,7 +50,7 @@ A mobile browser remains an alternative for LAN and publicly trusted remote entr
 | Data | Android Keystore encrypts the device token and any pinned LAN or self-signed FRP CA; Web storage stays in the app sandbox. Clear Site Data removes credentials, origins, cookies, cache, and Web storage. |
 | Backup | App backup is disabled; TLS private keys and signing keys must remain outside the repository. |
 
-The network security configuration does not trust user-installed CAs. For LAN, the plugin signs a new leaf for the selected interface address while the app retains the stable CA pin. For the unreleased self-signed FRP entry, the computer-side CA lasts five years and its public-IPv4 leaf lasts 397 days; the leaf can rotate under the same CA, but CA expiry or replacement requires a new fingerprint check and re-pairing. These are certificate lifetimes, not an unattended-availability guarantee.
+The network security configuration does not trust user-installed CAs. For LAN, the plugin signs a new leaf for the selected interface address while the app retains the stable CA pin. For the candidate self-signed FRP entry, the computer-side CA lasts five years and its public-IPv4 leaf lasts 397 days; the leaf can rotate under the same CA, but CA expiry or replacement requires a new fingerprint check and re-pairing. These are certificate lifetimes, not an unattended-availability guarantee.
 
 ## Mobile extension bridge
 
@@ -75,6 +75,6 @@ The debug APK is written to `app/build/outputs/apk/debug/app-debug.apk`. GitHub 
 
 ## Acceptance
 
-Shared URL-policy tests cover origin normalization, pairing entry, same-origin navigation, and download paths. Local tests cover the new remote-CA trust decision, but a real VPS plus phone end-to-end test of the unreleased self-signed FRP entry has not been recorded. Device acceptance must still cover that path, small screens, landscape, cutouts and gestures, the keyboard, font scaling, valid and invalid TLS, file input, downloads, Back, rotation, and reauthentication after clearing data.
+Shared URL-policy tests cover origin normalization, pairing entry, same-origin navigation, and download paths. Local tests cover the 0.4.6 remote-CA trust decision, but a real VPS plus phone end-to-end test of the self-signed FRP entry has not been recorded. Device acceptance must still cover that path, small screens, landscape, cutouts and gestures, the keyboard, font scaling, valid and invalid TLS, file input, downloads, Back, rotation, and reauthentication after clearing data.
 
 Apache-2.0 licensed. See [LICENSE](../../LICENSE).

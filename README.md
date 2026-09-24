@@ -31,11 +31,11 @@
 
 > DSH Mobile 是 DeepSeek Harness 社区插件，原生 App 仅支持 Android。
 >
-> **0.4.5 更新**：适配 DSH `0.1.7-alpha.2` 的移动端启动脚本地址，修复重连异常与失败资源的长期缓存，并为 App 的连接恢复增加退出入口。[详细记录](CHANGELOG.md)。
+> **当前已发布：0.4.5**。适配 DSH `0.1.7-alpha.2` 的移动端启动脚本地址，修复重连异常与失败资源的长期缓存，并为 App 的连接恢复增加退出入口。[详细记录](CHANGELOG.md)。
 >
-> **升级提醒**：建议插件与 Android App 同步更新至 0.4.5；已有配对会保留，旧版 App 仍可连接，但需要新版 App 才能使用连接恢复时的重试和设备列表入口。[兼容说明](#兼容性)。
+> **升级提醒**：建议插件与 Android App 同步更新至已发布的 0.4.5；已有配对会保留，旧版 App 仍可连接，但连接恢复时的重试和设备列表入口需要 0.4.5 App。[兼容说明](#兼容性)。
 >
-> **开发中，尚未发布**：远程诊断增加代理补充探测，自建 FRP 增加接入既有 frps 与自签入口；这些能力不在 0.4.5 中。[待发布记录](CHANGELOG.md#unreleased)。
+> **0.4.6 候选版，尚未发布**：远程诊断增加代理补充探测，自建 FRP 增加接入既有 frps 与自签入口。自签入口需要 0.4.6 Android App；已发布的 0.4.5 App 不支持。下方仍提供线上可安装的 0.4.5。[候选版记录](CHANGELOG.md#unreleased)。
 
 <p align="center">
   <a href="https://github.com/saya-ch/dsh-mobile/releases/download/v0.4.5/dsh-mobile-android-v0.4.5.apk"><img src="assets/brand/app-icon-rounded.svg" alt="DSH Mobile 安卓应用图标" width="72" height="72"></a><br>
@@ -45,7 +45,7 @@
 
 DSH Mobile 是一个 DeepSeek Harness 插件，让手机浏览器或 Android App 通过局域网，或可选的 Tailscale Funnel、cpolar、cloudflared、自建 FRP 或自有反向代理远程通道连接电脑，继续使用同一份会话、工作区、消息和工具。局域网与远程访问分别启停、分别管理设备，且都不修改 DeepSeek Harness 源码。
 
-移动访问使用独立 HTTPS 与设备配对；Android App 固定局域网私有 CA，公开远程通道使用系统信任的证书，待发布的自签 FRP 入口则在配对时固定远程 CA。
+移动访问使用独立 HTTPS 与设备配对；Android App 固定局域网私有 CA，公开远程通道使用系统信任的证书；0.4.6 候选版的自签 FRP 入口还需由同版本 App 在配对时固定远程 CA。
 
 它还能在 DSH 对话里用 `/mobile <需求>` 定制手机端。
 
@@ -58,7 +58,7 @@ DSH Mobile 是一个 DeepSeek Harness 插件，让手机浏览器或 Android App
 - **配对与多设备**：扫码、链接或密钥配对一次；切换 Wi-Fi、热点或 IP 后通常自动恢复；App 在一个设备列表中同时显示多台已配对电脑（局域网与全部远程），每台实时显示可达状态，一键切换、重新配对或删除。
 - **一键诊断与放行**：检查版本、网关、网卡、防火墙和远程通道，生成脱敏报告；被拦截的第三方插件连接按确切路径一键放行。
 - **任务系统通知**：任务完成与待输入以 Android 系统通知提醒，可在 App 内的 DSH 常规设置中开启，锁屏文本脱敏。
-- **纵深安全**：局域网与待发布的自签入口固定私有 CA，公开远程入口使用受信任 HTTPS；凭据存 Keystore，设备令牌只发往精确 Origin，第三方 WS 默认拦截。
+- **纵深安全**：局域网固定私有 CA，公开远程入口使用受信任 HTTPS；0.4.6 候选版的自签 FRP 入口另由 0.4.6 App 固定远程 CA。凭据存 Keystore，设备令牌只发往精确 Origin，第三方 WS 默认拦截。
 
 配对设备被视为完全信任，可以操作电脑上的 DSH；建议只在可信的家庭、办公局域网或可信 VPN 中使用。
 
@@ -145,7 +145,7 @@ dsh plugin --profile web add dshmarket
 
 Tailscale Funnel 覆盖范围广，但在中国大陆网络下可能不稳定。其运行组件把公开监听生命周期绑定到父进程和受限控制通道；父进程退出、控制通道关闭或显式停止时会结束当前代次并清理资源。cpolar 更适合国内网络；自建 FRP 适合已有 VPS、希望避开公共服务带宽限制的用户。cloudflared 有两种模式：快速隧道不需要账号或登录，但地址随机、每次重连都会变化，官方定位为测试用途且无可用性保证，因此只适合临时或验证场景；命名隧道使用 Cloudflare 账号令牌，能保留重启后不变的固定公网域名。中国大陆 VPS 上的未备案域名可能被云厂商拦截，此时可使用公网 IPv4 模式。插件会校验按需下载的固定版本组件，配置与程序均保存在 `$DSH_HOME/mobile-access/`，可随时在面板中彻底清除。
 
-0.4.5 的自建 FRP 使用指向 DSH 回环网关的 HTTP vhost：VPS 上的明文 vhost 只允许回环访问，由 Caddy 提供公网 HTTPS。待发布的“接入既有 frps”不会安装或改动服务器；公开 CA 档仍需受限 HTTP vhost 与 Caddy，自签档则用 frps TCP 透传至电脑端 HTTPS 网关，由新版 Android App 在配对时固定 CA。自签档目前面向公网 IPv4，旧版 0.4.5 App 不支持；两档都不开放任意 FRP 配置。frps 的 `proxyBindAddr` 是全局代理监听设置，不能只为新增 TCP 入口调整而忽略已有明文 vhost。[接入指南](docs/ATTACH_EXISTING_FRPS.md)。
+已发布 0.4.5 的自建 FRP 使用指向 DSH 回环网关的 HTTP vhost：VPS 上的明文 vhost 只允许回环访问，由 Caddy 提供公网 HTTPS。0.4.6 候选版新增的“接入既有 frps”不会安装或改动服务器；公开 CA 档仍需受限 HTTP vhost 与 Caddy，自签档则用 frps TCP 透传至电脑端 HTTPS 网关，须由 0.4.6 Android App 在配对时固定 CA。自签档目前面向公网 IPv4，已发布的 0.4.5 App 不支持；两档都不开放任意 FRP 配置。frps 的 `proxyBindAddr` 是全局代理监听设置，不能只为新增 TCP 入口调整而忽略已有明文 vhost。[候选版接入指南](docs/ATTACH_EXISTING_FRPS.md)。
 
 自有反向代理的 HTTP 后端只允许留在可信私网；**不要把它映射到公网，也不要绕过它直连 DSH 或现有 LAN 3443**。来源 CIDR 匹配代理的直接 TCP 来源，不信任转发头；反代须保留外部 Host（含端口）、Origin、Cookie 和 WebSocket。清除代理配置不会删除已配对远程设备。
 
@@ -186,7 +186,7 @@ Tailscale Funnel 覆盖范围广，但在中国大陆网络下可能不稳定。
 
 ## 设备管理
 
-Android App 用一个“已配对设备”列表同时显示多台电脑：局域网、cpolar、cloudflared、Tailscale Funnel 和自建 FRP 配对共处一处。首次升级会自动迁移旧版局域网与远程凭据，不要求重新配对；地址变化且 `instanceId` 与原记录一致时会合并条目，保留自定义名称。自签 FRP 使用独立 CA 指纹作为身份，首次与局域网配对时可能显示为另一条记录。设备 Token 和局域网 CA 由 Android Keystore 加密保存；待发布的自签 FRP 档还会加密保存固定的远程 CA。这些信息不会显示在设备列表或二维码中。
+Android App 用一个“已配对设备”列表同时显示多台电脑：局域网、cpolar、cloudflared、Tailscale Funnel 和自建 FRP 配对共处一处。首次升级会自动迁移旧版局域网与远程凭据，不要求重新配对；地址变化且 `instanceId` 与原记录一致时会合并条目，保留自定义名称。0.4.6 候选版的自签 FRP 使用独立 CA 指纹作为身份，首次与局域网配对时可能显示为另一条记录。设备 Token 和局域网 CA 由 Android Keystore 加密保存；0.4.6 App 还会加密保存自签 FRP 入口固定的远程 CA。这些信息不会显示在设备列表或二维码中。
 
 每条记录显示自定义名称、连接方式、Origin、实时可达状态和最近连接时间。绿色状态点表示“可达”，灰色状态点表示“检测中”“暂不可达”“配对已过期”或“电脑端已移除”；可达性检查直接验证 DSH Gateway，不依赖 ICMP，也不会把暂时断网误判成电脑端撤销。
 
@@ -306,6 +306,7 @@ macOS 上局域网、自建 FRP 与自有反向代理可用；三个托管组件
 
 | DSH Mobile 插件                         | 验证支持的 DeepSeek Harness 版本                             |
 | ----------------------------------------- | -------------------------------------------------------------- |
+| `0.4.6`（候选，未发布） | `0.1.7-alpha.2`、`0.1.7-rc.1`（源码契约、隔离配对及 WebSocket 工作区读取；尚非跨网真机验收） |
 | `0.4.5` | `0.1.7-alpha.2`（源码契约检查、本机局域网及远程网关联调） |
 | `0.4.4` | `0.1.6-alpha.2`（本机源码与 renderer-v2 契约检查） |
 | `0.4.3` | `0.1.6-alpha.2`（本机源码与 renderer-v2 契约检查） |
@@ -347,10 +348,12 @@ npm ci
 npm run verify
 ```
 
-真实启动冒烟另用临时 DSH Home、随机回环端口和 Chromium 配对，不访问现有用户配置，也不发送模型请求。首次在本机运行时安装测试依赖：
+真实启动冒烟另用临时 DSH Home、随机回环端口和 Chromium 配对，不访问现有用户配置，也不发送模型请求。CI 分别测试 DSH `0.1.7-alpha.2` 与 `0.1.7-rc.1`；本机可把后者装在独立目录，避免替换插件的开发依赖：
 
 ```powershell
-npm install --no-save --package-lock=false @deepseek-ai/dsh@0.1.7-alpha.2
+$dshMobileTestRuntime = Join-Path $env:TEMP 'dsh-mobile-test-runtime'
+npm install --prefix $dshMobileTestRuntime --no-save --package-lock=false @deepseek-ai/dsh@0.1.7-rc.1
+$env:DSH_BOOT_SMOKE_BIN = Join-Path $dshMobileTestRuntime 'node_modules/@deepseek-ai/dsh/lib/bin.js'
 npx playwright install chromium --only-shell
 npm run smoke:dsh-boot
 ```
