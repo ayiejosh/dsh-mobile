@@ -1949,6 +1949,7 @@ class MainActivity : Activity() {
             setBackgroundColor(initialChromeColor)
         }
         val browser = WebView(this)
+        configureWebViewHttpCache(browser)
         webView = browser
         browser.setBackgroundColor(getColor(R.color.app_background))
         browser.settings.apply {

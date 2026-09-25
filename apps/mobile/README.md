@@ -37,6 +37,8 @@ The private CA is not discovery data. After explicit LAN or self-signed FRP pair
 
 A mobile browser remains an alternative for LAN and publicly trusted remote entries. The self-signed FRP entry requires the 0.4.6 Android app: ordinary browsers do not trust its private CA automatically.
 
+On WebView 151 or later, the app gives its own HTTP cache a 64 MiB minimum quota so large versioned DSH scripts can be reused across page loads. Older WebViews keep their default quota; the app never lowers a larger existing quota. **Clear Site Data** also removes this cached content.
+
 ## Security properties
 
 | Control | Android behavior |
