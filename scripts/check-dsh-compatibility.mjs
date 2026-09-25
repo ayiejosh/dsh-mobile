@@ -107,9 +107,12 @@ for (const declaration of [
   "'rightbar': { kind: 'single', scope: 'root' }",
   "'shell.overlay': { kind: 'list', scope: 'root' }",
   "ctx.reflect.provide('layout'",
-  "ctx.slots.provideRoot({ hooks: { panelInfo } })",
 ]) {
   if (!layoutSource.includes(declaration)) throw new Error(`DSH layout contract changed: missing ${declaration}`)
+}
+if (!layoutSource.includes('ctx.slots.provideRoot({ hooks: { panelInfo } })')
+  && !layoutSource.includes('ctx.slots.provideRoot({ hooks: { panelInfo: layout.panelInfo } })')) {
+  throw new Error('DSH layout contract changed: missing panelInfo root hook')
 }
 
 const conversationSources = await Promise.all((await sourceFilesUnder('packages/client/ui-conversation/src/client/skeleton'))
