@@ -402,3 +402,46 @@ describe('composer soft-keyboard Enter', () => {
     expect(source).not.toContain('lineBreakButton')
   })
 })
+describe('header strip pan', () => {
+  it('reserves the horizontal gesture without taking vertical scrolling', () => {
+    // The strip is panned by a transform, so the browser must hand the horizontal gesture
+    // to the surface while keeping vertical page panning for itself.
+    expect(NATIVE_MOBILE_STYLES).toContain('.dshm-shell header { touch-action: pan-y; }')
+  })
+
+  it('pans with a transform instead of a scroller', () => {
+    // A scroller is not usable here: `overflow` clips the popovers rendered inside the row,
+    // and lifting their containing block to escape the clip moves them off their trigger.
+    // Asserted from the built surface source so a later refactor cannot quietly swap the
+    // mechanism back for `overflow`.
+    const source = installNativeMobileSurface.toString()
+    expect(source).toContain('translateX(')
+    expect(source).toContain('scrollWidth - parts.row.clientWidth')
+    expect(source).toContain("parts.row.style.transform = value")
+    expect(source).toContain("parts.lead.style.transform = value")
+    expect(source).not.toContain('overflowX')
+  })
+
+  it('keeps a tap a tap and only pans past the threshold', () => {
+    const source = installNativeMobileSurface.toString()
+    expect(source).toContain('STRIP_DRAG_THRESHOLD_PX')
+    expect(source).toContain('if (!stripMoved && Math.abs(travelled) < STRIP_DRAG_THRESHOLD_PX) return')
+    // A mouse drags to select text; only a finger pans.
+    expect(source).toContain('if (event.pointerType === "mouse") return')
+  })
+
+  it('re-clamps the offset when the row content changes and releases it on dispose', () => {
+    // A new session or a job starting changes the range, and a stale offset would leave
+    // the chips parked off-screen with nothing to pan back.
+    const source = installNativeMobileSurface.toString()
+    expect(source).toContain('stripOffset = Math.min(stripOffset, stripRange())')
+    expect(source).toContain('document.removeEventListener("pointermove", onStripPointerMove, true)')
+    expect(source).toContain('stripOffset = 0')
+  })
+
+  it('does not open a chip that a drag happened to end on', () => {
+    const source = installNativeMobileSurface.toString()
+    expect(source).toContain('onStripClickCapture')
+    expect(source).toContain('if (!stripMoved) return')
+  })
+})

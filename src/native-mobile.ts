@@ -11,6 +11,9 @@ export const NATIVE_MOBILE_OVERLAY_QUERY = '(max-width:720px)'
 
 /** Mobile feature and compatibility rules applied to DSH React surfaces. */
 export const NATIVE_MOBILE_STYLES = `
+/* The header strip is panned by a transform rather than scrolled, so the browser keeps
+vertical panning for the page and hands the horizontal gesture to the surface. */
+.dshm-shell header { touch-action: pan-y; }
 /* The surface appends chrome to <body> on every non-loopback page load, but
    every rule that gives that chrome a box lives inside the overlay query
    below. Outside the query the scrim kept the UA button box: an empty,
@@ -239,6 +242,9 @@ export function markNativeMobileSettings(root: ParentNode): number {
 }
 
 const AUTO_HISTORY_THRESHOLD_PX = 64
+
+/** Travel, in CSS pixels, that separates a header strip pan from a tap on a chip. */
+const STRIP_DRAG_THRESHOLD_PX = 8
 
 export type NativeMobileLanguage = 'it' | 'en' | 'zh'
 
@@ -685,6 +691,69 @@ export function installNativeMobileSurface(): () => void {
     window.setTimeout(showBranchToast, 80)
   }
   document.addEventListener('click', onBranchClick, true)
+  // --- header strip pan ---------------------------------------------------
+  // The stock header row cannot shrink its groups, so on a phone the trailing controls sit
+  // outside the viewport and nothing brings them in. A scroller is not usable: `overflow`
+  // clips the popovers rendered inside the row, and lifting their containing block to escape
+  // the clip moves them off their trigger — measured, the jobs menu opened anchored to the
+  // header's left edge instead of under its own pill. A transform clips nothing and carries
+  // the popovers with the strip, so the gesture and the popovers both keep working.
+  let stripOffset = 0
+  let stripDrag: { readonly startX: number; readonly startOffset: number } | undefined
+  let stripMoved = false
+  const stripParts = (): { readonly row: HTMLElement; readonly lead: HTMLElement | undefined } | undefined => {
+    const row = document.querySelector<HTMLElement>('[class*="_titleRow"]')
+    if (row === null) return undefined
+    return { row, lead: document.querySelector<HTMLElement>('[class*="_headerLeading"]') ?? undefined }
+  }
+  /** Overflow the strip can travel, in CSS pixels; zero when it already fits. */
+  const stripRange = (): number => {
+    const parts = stripParts()
+    if (parts === undefined) return 0
+    return Math.max(0, parts.row.scrollWidth - parts.row.clientWidth)
+  }
+  const applyStrip = (): void => {
+    const parts = stripParts()
+    if (parts === undefined) return
+    const value = stripOffset === 0 ? '' : `translateX(${-stripOffset}px)`
+    parts.row.style.transform = value
+    // The leading chip is its own grid column, so it has to travel with the row or the
+    // panned chips would slide underneath it.
+    if (parts.lead !== undefined) parts.lead.style.transform = value
+  }
+  const onStripPointerDown = (event: PointerEvent): void => {
+    // A mouse drags to select; only a finger pans the strip.
+    if (event.pointerType === 'mouse') return
+    if (!(event.target instanceof Element) || event.target.closest('header') === null) return
+    if (stripRange() === 0) return
+    stripDrag = { startX: event.clientX, startOffset: stripOffset }
+    stripMoved = false
+  }
+  const onStripPointerMove = (event: PointerEvent): void => {
+    if (stripDrag === undefined) return
+    const travelled = event.clientX - stripDrag.startX
+    // Below the threshold the gesture is still a tap, so the chip under it can open.
+    if (!stripMoved && Math.abs(travelled) < STRIP_DRAG_THRESHOLD_PX) return
+    stripMoved = true
+    stripOffset = Math.min(stripRange(), Math.max(0, stripDrag.startOffset - travelled))
+    applyStrip()
+    event.preventDefault()
+  }
+  const onStripPointerUp = (): void => {
+    stripDrag = undefined
+  }
+  const onStripClickCapture = (event: MouseEvent): void => {
+    if (!stripMoved) return
+    // A drag that ended on a chip must not also open it.
+    stripMoved = false
+    event.preventDefault()
+    event.stopPropagation()
+  }
+  document.addEventListener('pointerdown', onStripPointerDown, true)
+  document.addEventListener('pointermove', onStripPointerMove, { capture: true, passive: false })
+  document.addEventListener('pointerup', onStripPointerUp, true)
+  document.addEventListener('pointercancel', onStripPointerUp, true)
+  document.addEventListener('click', onStripClickCapture, true)
   let frame: HTMLElement | undefined
   let sidebar: HTMLElement | undefined
   let sidebarRoot: HTMLElement | undefined
@@ -780,6 +849,10 @@ export function installNativeMobileSurface(): () => void {
 
   const sync = (): void => {
     scheduled = 0
+    // Content changes under the strip — a new session, a job starting — so the offset has
+    // to be re-clamped or the chips would stay parked off-screen with nothing to pan back.
+    stripOffset = Math.min(stripOffset, stripRange())
+    applyStrip()
     const dedicatedCenter = document.querySelector<HTMLElement>('.dshm-main') ?? undefined
     const nextFrame = resolveNativeMobileFrame(document, dedicatedCenter)
     if (frame !== nextFrame) frame?.removeAttribute('data-dsh-mobile-frame')
@@ -936,6 +1009,13 @@ export function installNativeMobileSurface(): () => void {
     observer.disconnect()
     overlayQuery.removeEventListener('change', schedule)
     document.removeEventListener('click', onBranchClick, true)
+    document.removeEventListener('pointerdown', onStripPointerDown, true)
+    document.removeEventListener('pointermove', onStripPointerMove, true)
+    document.removeEventListener('pointerup', onStripPointerUp, true)
+    document.removeEventListener('pointercancel', onStripPointerUp, true)
+    document.removeEventListener('click', onStripClickCapture, true)
+    stripOffset = 0
+    applyStrip()
     cameraButton.removeEventListener('pointerdown', quietMediaPointer)
     cameraButton.removeEventListener('click', takePhoto)
     if (branchToastTimer !== 0) window.clearTimeout(branchToastTimer)
