@@ -246,6 +246,15 @@ const AUTO_HISTORY_THRESHOLD_PX = 64
 /** Travel, in CSS pixels, that separates a header strip pan from a tap on a chip. */
 const STRIP_DRAG_THRESHOLD_PX = 8
 
+/** Flick speed, in CSS pixels per millisecond, below which the strip just stops. */
+const STRIP_COAST_MIN_VELOCITY_PX_PER_MS = 0.05
+
+/** Share of a new sample folded into the flick speed, so one jittery sample cannot fling it. */
+const STRIP_COAST_SMOOTHING = 0.35
+
+/** Per-16ms share of the flick speed kept while the strip coasts to a stop. */
+const STRIP_COAST_FRICTION = 0.92
+
 export type NativeMobileLanguage = 'it' | 'en' | 'zh'
 
 interface FileDropTarget { dispatchEvent(event: Event): boolean }
@@ -701,6 +710,10 @@ export function installNativeMobileSurface(): () => void {
   let stripOffset = 0
   let stripDrag: { readonly startX: number; readonly startOffset: number } | undefined
   let stripMoved = false
+  let stripFrame = 0
+  let stripVelocity = 0
+  let stripSampleX = 0
+  let stripSampleAt = 0
   const stripParts = (): { readonly row: HTMLElement; readonly lead: HTMLElement | undefined } | undefined => {
     const row = document.querySelector<HTMLElement>('[class*="_titleRow"]')
     if (row === null) return undefined
@@ -721,13 +734,62 @@ export function installNativeMobileSurface(): () => void {
     // panned chips would slide underneath it.
     if (parts.lead !== undefined) parts.lead.style.transform = value
   }
+  // Cancelling the frame must not touch the flick speed: it is the coast's input, and
+  // clearing it here would zero the speed before the coast ever reads it.
+  const cancelStripCoast = (): void => {
+    if (stripFrame !== 0) window.cancelAnimationFrame(stripFrame)
+    stripFrame = 0
+  }
+  /**
+   * Carry the strip on after the finger lifts. Without this the strip stops dead under the
+   * finger, which is what makes a pan feel broken next to a real scroll.
+   */
+  const coastStrip = (): void => {
+    cancelStripCoast()
+    if (Math.abs(stripVelocity) < STRIP_COAST_MIN_VELOCITY_PX_PER_MS) {
+      stripVelocity = 0
+      return
+    }
+    let previous = performance.now()
+    const step = (now: number): void => {
+      // A frame can arrive in the same millisecond as the last one; a zero elapsed time
+      // would freeze the coast, so the step always advances by at least a millisecond.
+      const elapsed = Math.max(1, Math.min(64, now - previous))
+      previous = now
+      stripVelocity *= STRIP_COAST_FRICTION ** (elapsed / 16)
+      // Decay is what ends the coast; comparing positions instead would stop it on any
+      // frame that happened to land on the same offset.
+      if (Math.abs(stripVelocity) < STRIP_COAST_MIN_VELOCITY_PX_PER_MS) {
+        cancelStripCoast()
+        stripVelocity = 0
+        return
+      }
+      const range = stripRange()
+      // stripVelocity is positive when the finger was travelling left, which is the
+      // direction the strip has to keep going.
+      stripOffset = Math.min(range, Math.max(0, stripOffset + stripVelocity * elapsed))
+      applyStrip()
+      // Hitting either end ends the coast; the strip does not bounce.
+      if (stripOffset === range || stripOffset === 0) {
+        cancelStripCoast()
+        stripVelocity = 0
+        return
+      }
+      stripFrame = window.requestAnimationFrame(step)
+    }
+    stripFrame = window.requestAnimationFrame(step)
+  }
   const onStripPointerDown = (event: PointerEvent): void => {
     // A mouse drags to select; only a finger pans the strip.
     if (event.pointerType === 'mouse') return
     if (!(event.target instanceof Element) || event.target.closest('header') === null) return
     if (stripRange() === 0) return
+    cancelStripCoast()
     stripDrag = { startX: event.clientX, startOffset: stripOffset }
     stripMoved = false
+    stripVelocity = 0
+    stripSampleX = event.clientX
+    stripSampleAt = event.timeStamp
   }
   const onStripPointerMove = (event: PointerEvent): void => {
     if (stripDrag === undefined) return
@@ -735,12 +797,21 @@ export function installNativeMobileSurface(): () => void {
     // Below the threshold the gesture is still a tap, so the chip under it can open.
     if (!stripMoved && Math.abs(travelled) < STRIP_DRAG_THRESHOLD_PX) return
     stripMoved = true
+    const elapsed = event.timeStamp - stripSampleAt
+    if (elapsed > 0) {
+      // Smoothed so one jittery sample cannot fling the strip across the screen.
+      stripVelocity = stripVelocity * (1 - STRIP_COAST_SMOOTHING) + ((stripSampleX - event.clientX) / elapsed) * STRIP_COAST_SMOOTHING
+      stripSampleX = event.clientX
+      stripSampleAt = event.timeStamp
+    }
     stripOffset = Math.min(stripRange(), Math.max(0, stripDrag.startOffset - travelled))
     applyStrip()
     event.preventDefault()
   }
   const onStripPointerUp = (): void => {
+    if (stripDrag === undefined) return
     stripDrag = undefined
+    if (stripMoved) coastStrip()
   }
   const onStripClickCapture = (event: MouseEvent): void => {
     if (!stripMoved) return
@@ -1014,6 +1085,8 @@ export function installNativeMobileSurface(): () => void {
     document.removeEventListener('pointerup', onStripPointerUp, true)
     document.removeEventListener('pointercancel', onStripPointerUp, true)
     document.removeEventListener('click', onStripClickCapture, true)
+    cancelStripCoast()
+    stripVelocity = 0
     stripOffset = 0
     applyStrip()
     cameraButton.removeEventListener('pointerdown', quietMediaPointer)

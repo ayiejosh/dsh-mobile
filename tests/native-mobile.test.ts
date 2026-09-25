@@ -445,3 +445,42 @@ describe('header strip pan', () => {
     expect(source).toContain('if (!stripMoved) return')
   })
 })
+
+describe('header strip coast', () => {
+  it('carries the strip on after the finger lifts', () => {
+    // A pan that stops dead under the finger reads as broken next to a real scroll, so a
+    // flick keeps its speed, decays, and settles — the decay is what ends it, because
+    // comparing offsets would stop the coast on any frame that landed on the same pixel.
+    const source = installNativeMobileSurface.toString()
+    expect(source).toContain('STRIP_COAST_FRICTION ** (elapsed / 16)')
+    expect(source).toContain('if (Math.abs(stripVelocity) < STRIP_COAST_MIN_VELOCITY_PX_PER_MS)')
+    expect(source).toContain('STRIP_COAST_MIN_VELOCITY_PX_PER_MS')
+  })
+
+  it('never cancels the frame and the flick speed in the same breath', () => {
+    // The first version cleared the speed inside the canceller, so the coast always read
+    // zero and the strip never moved. Cancelling must not touch the coast's input.
+    const source = installNativeMobileSurface.toString()
+    expect(source).toContain('const cancelStripCoast')
+    expect(source).not.toContain('stopStripCoast')
+    const cancel = source.slice(source.indexOf('const cancelStripCoast'), source.indexOf('const coastStrip'))
+    expect(cancel).not.toContain('stripVelocity =')
+  })
+
+  it('follows the flick direction instead of reversing it', () => {
+    const source = installNativeMobileSurface.toString()
+    expect(source).toContain('stripOffset + stripVelocity * elapsed')
+  })
+
+  it('advances by at least a millisecond and stops at an edge', () => {
+    const source = installNativeMobileSurface.toString()
+    expect(source).toContain('Math.max(1, Math.min(64, now - previous))')
+    expect(source).toContain('if (stripOffset === range || stripOffset === 0)')
+  })
+
+  it('smoothes the samples so one jittery move cannot fling the strip', () => {
+    const source = installNativeMobileSurface.toString()
+    expect(source).toContain('STRIP_COAST_SMOOTHING')
+    expect(source).toContain('stripVelocity * (1 - STRIP_COAST_SMOOTHING)')
+  })
+})
