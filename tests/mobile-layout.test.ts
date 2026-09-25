@@ -298,7 +298,68 @@ describe('dedicated mobile layout boot', () => {
     expect(output).toContain('"inject":["@deepseek-ai/dsh-client-connection","@deepseek-ai/dsh-api-remotes","dsh-mobile"]')
     expect(output).toMatch(/"url":"\/mobile-access\/mobile-boot\/[a-f\d]{64}\.js"/u)
     expect(output).not.toContain('/plugins/application.js?rev=stock')
-    expect(output).toContain(`"entries":${JSON.stringify(entries.map(entry => entry.id))}`)
+    // Rows are emitted in the canonical (id-sorted) order, not manifest order,
+    // so the derived batch is stable across restarts of an unchanged manifest.
+    expect(output).toContain(`"entries":${JSON.stringify([...entries.map(entry => entry.id)].sort())}`)
+  })
+
+  it('derives the same merged batch, key, and body order from a reordered manifest', () => {
+    const entries = [
+      { id: '@deepseek-ai/dsh-client-connection', url: '/plugins/connection.js?rev=connection', rev: 'connection', inject: [] },
+      { id: '@deepseek-ai/dsh-client-ui-renderer', url: '/plugins/renderer.js?rev=renderer', rev: 'renderer', inject: [] },
+      {
+        id: '@deepseek-ai/dsh-client-ui-layout',
+        url: '/plugins/layout.js?rev=layout',
+        rev: 'layout',
+        inject: [
+          '@deepseek-ai/dsh-client-locale',
+          '@deepseek-ai/dsh-client-ui-renderer',
+          '@deepseek-ai/dsh-client-ui-session',
+          '@deepseek-ai/dsh-client-ui-theme',
+        ],
+      },
+      {
+        id: '@deepseek-ai/dsh-client-ui-settings',
+        url: '/plugins/settings.js?rev=settings',
+        rev: 'settings',
+        inject: ['@deepseek-ai/dsh-client-connection', '@deepseek-ai/dsh-api-remotes'],
+      },
+      {
+        id: 'dsh-mobile',
+        url: '/plugins/dsh-mobile.js?rev=mobile',
+        rev: 'mobile',
+        inject: ['@deepseek-ai/dsh-client-connection', '@deepseek-ai/dsh-client-ui-sidebar'],
+        immediately: true,
+      },
+    ]
+    const manifest = (ordered: typeof entries): string =>
+      `<!doctype html><html><head><script>globalThis["__DSH_BOOT__"] = ${JSON.stringify({
+        rev: 'stock',
+        entries: ordered,
+        batches: [{ phase: 'application', url: '/plugins/application.js?rev=stock', rev: 'stock-batch', entries: ordered.map(entry => entry.id) }],
+      })};</script></head><body></body></html>`
+    const splitFor = (ordered: typeof entries) => {
+      const plan = parseMobileBootPlan(manifest(ordered))
+      return splitMobileBootBatch(plan.planEntries ?? [], new Map(), new Set())
+    }
+    const summarize = (split: ReturnType<typeof splitFor>) => split.plans.map(plan => ({
+      key: plan.key,
+      path: plan.path,
+      ids: plan.entries.map(entry => entry.id),
+      urls: plan.entries.map(entry => entry.url),
+    }))
+
+    const forward = splitFor(entries)
+    const reverse = splitFor([...entries].reverse())
+
+    // The same module set must derive the same merged batch: one key (the URL)
+    // and one body order (the ETag). Upstream lists these entries in
+    // module-registration order, which is not stable across restarts of an
+    // unchanged configuration, so an order-sensitive derivation re-hashes every
+    // batch after each restart and every paired device re-downloads the whole
+    // boot payload.
+    expect(summarize(reverse)).toEqual(summarize(forward))
+    expect(reverse.rows).toEqual(forward.rows)
   })
 
   it.each([false, true])('installs authenticated HTTP transport before the alpha.2 boot manifest (reverse roster: %s)', reverse => {
