@@ -644,10 +644,12 @@ describe('dedicated mobile layout boot', () => {
   })
 
   it.each([
-    [755, false, true, false, false, 460],
+    [375, false, false, false, false, 375],
+    [375, false, true, false, false, 375],
+    [755, false, true, false, false, 755],
     [756, false, true, false, true, 300],
     [899, false, true, false, true, 405],
-    [899, true, true, false, false, 460],
+    [899, true, true, false, false, 899],
     [900, true, true, false, false, 460],
     [900, false, true, false, true, 405],
     [1039, true, true, false, false, 460],
@@ -667,6 +669,16 @@ describe('dedicated mobile layout boot', () => {
     expect(MOBILE_LAYOUT_STYLES).toContain('.dshm-shell[data-rightbar-docked=true] .dshm-main{margin-right:var(--dshm-rightbar-width)}')
     expect(MOBILE_LAYOUT_STYLES).not.toContain('--dsh-sidebar-width')
     expect(MOBILE_LAYOUT_STYLES).not.toContain('data-dsh-sidebar-dragging')
+  })
+
+  it('uses the full phone viewport for the right panel without changing wide docking', () => {
+    expect(MOBILE_LAYOUT_STYLES).toContain('@media(max-width:899px){.dshm-details{width:100%;max-width:100%;box-shadow:none}')
+    expect(MOBILE_LAYOUT_STYLES).toContain('.dshm-details [data-sidebar-right-toggle],.dshm-details [data-sidebar-right-mode]{min-width:48px;min-height:48px}')
+    expect(MOBILE_LAYOUT_STYLES).toContain('.dshm-shell[data-rightbar-docked=true] .dshm-details{position:absolute;width:var(--dshm-rightbar-width)')
+    const source = readFileSync(new URL('../src/mobile-layout.ts', import.meta.url), 'utf8')
+    expect(source).toContain('const rightbarFullWidth = state.detailsOpen && !rightbarDocked && !wideViewport')
+    expect(source).toContain('const scrimOpen = !rightbarFullWidth && isMobileScrimOpen(')
+    expect(source).toContain("rightbarFullWidth ? { inert: '', 'aria-hidden': true } : {}")
   })
 
   it('draws a theme-aware docked separator without changing geometry or hit targets', () => {
