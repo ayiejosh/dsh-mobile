@@ -755,16 +755,12 @@ function revisionedStaticCacheControl(
   statusCode: number | undefined,
 ): string | undefined {
   if (request.method !== 'GET' && request.method !== 'HEAD') return undefined
-  // Only a delivered artifact is immutable. A rev-bearing URL is unique per
-  // build, so a 200 for it can never change — but an error for the same URL is
-  // not that artifact. Stamping `max-age=31536000, immutable` onto a failure
-  // lets the WebView cache the rejection for a year: `rev` is a per-host-start
-  // nonce, so once the host restarts the bundle URL the page already holds is
-  // rejected, and the poisoned entry makes the plugin fail on every later boot
-  // until the browser cache is cleared. Upstream DSH only attaches its
-  // immutable directive on the success path; failures there carry no
-  // cache-control at all, so the gateway keeps `no-store` from
-  // setSecurityHeaders instead.
+  // Only a delivered artifact is immutable. Upstream DSH revisions identify
+  // successful bundles; a failed fetch for the same URL is not that artifact.
+  // Stamping `max-age=31536000, immutable` onto a failure lets the WebView
+  // cache the rejection for a year and keep failing until its cache is cleared.
+  // Upstream DSH only marks successful responses immutable. Failures carry no
+  // cache-control, so the gateway keeps `no-store` from setSecurityHeaders.
   if (statusCode !== 200) return undefined
   let target: URL
   try { target = new URL(request.url ?? '/', 'https://dsh-mobile.invalid') } catch { return undefined }

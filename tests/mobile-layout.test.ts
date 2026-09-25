@@ -720,7 +720,7 @@ describe('dedicated mobile layout boot', () => {
     expect(source).toContain("active.matches('input,textarea') || active.isContentEditable")
   })
 
-  it('publishes the root panelInfo hook the official layout owns', () => {
+  it('shares panelInfo between the root hook and layout service', () => {
     const restore = stubClientGlobals()
     try {
       const cleanups: Array<() => void> = []
@@ -780,6 +780,7 @@ describe('dedicated mobile layout boot', () => {
       const panelInfo = contribution?.hooks.panelInfo
       expect(panelInfo).toBeDefined()
       expect(panelInfo?.getSnapshot()).toEqual({ activePanelId: null })
+      expect(layout?.panelInfo).toBe(panelInfo)
 
       const seen: Array<{ activePanelId: string | null }> = []
       panelInfo?.subscribe(() => { seen.push(panelInfo.getSnapshot()) })

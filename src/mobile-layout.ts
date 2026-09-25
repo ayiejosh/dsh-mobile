@@ -597,10 +597,7 @@ export function apply(ctx: MobileClientContext): void {
     // ("strict standard hook 'panelInfo' has no source") and renders as a dead
     // cell — the workspace sidebar's session list lives exactly there.
     const disposePanelInfo = typeof ctx.slots.provideRoot === 'function'
-      ? ctx.slots.provideRoot({ hooks: { panelInfo: {
-          getSnapshot: () => controller.getSnapshot().panelInfo,
-          subscribe: (listener: () => void) => controller.subscribe(listener),
-        } } })
+      ? ctx.slots.provideRoot({ hooks: { panelInfo: controller.panelInfo } })
       : () => {}
     const disposeRoot = ctx.slots.register({
       name: 'root',

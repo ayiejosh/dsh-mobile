@@ -217,11 +217,13 @@ async function upstream(
   upgradeObservations: IncomingHttpHeaders[]
   upgradeResponseBytes: number[]
   releaseHold: () => void
+  setBatchEntriesReversed: (reversed: boolean) => void
 }> {
   const observations: UpstreamObservation[] = []
   const upgradeObservations: IncomingHttpHeaders[] = []
   const upgradeResponseBytes: number[] = []
   const held: Array<() => void> = []
+  let batchEntriesReversed = false
   const upgraded = new Set<Socket>()
   const server = createServer(async (incoming, response) => {
     const chunks: Buffer[] = []
@@ -278,9 +280,11 @@ async function upstream(
         { id: '@deepseek-ai/dsh-client-ui-settings', url: '/plugins/settings.js?rev=settings', rev: 'settings', inject: ['@deepseek-ai/dsh-api-remotes'] },
         { id: 'dsh-mobile', url: '/plugins/mobile.js?rev=mobile', rev: 'mobile', inject: ['@deepseek-ai/dsh-client-connection', '@deepseek-ai/dsh-client-ui-sidebar'] },
       )
+      const batchEntryIds = entries.map(entry => entry.id)
+      if (batchEntriesReversed) batchEntryIds.reverse()
       const graph = boot === 'legacy'
         ? { rev: 'stock', entries }
-        : { rev: 'stock', entries, batches: [{ phase: 'application', url: boot === 'batched-relative' || boot === 'batched-relative-invalid' ? 'plugins/??feature/client.js&rev=stock' : '/plugins/application.js?rev=stock', rev: 'stock-batch', entries: entries.map(entry => entry.id) }] }
+        : { rev: 'stock', entries, batches: [{ phase: 'application', url: boot === 'batched-relative' || boot === 'batched-relative-invalid' ? 'plugins/??feature/client.js&rev=stock' : '/plugins/application.js?rev=stock', rev: 'stock-batch', entries: batchEntryIds }] }
       const body = `<!doctype html><html><head><script>globalThis["__DSH_BOOT__"] = ${JSON.stringify(graph)};</script></head><body></body></html>`
       response.writeHead(200, { 'content-type': 'text/html; charset=utf-8', 'content-length': Buffer.byteLength(body) })
       response.end(body)
@@ -392,6 +396,7 @@ async function upstream(
     upgradeObservations,
     upgradeResponseBytes,
     releaseHold: () => { for (const release of held.splice(0)) release() },
+    setBatchEntriesReversed: (reversed) => { batchEntriesReversed = reversed },
   }
 }
 
@@ -824,6 +829,48 @@ describe('HTTP gateway', () => {
     expect(inner.observations.map(observation => observation.url)).toContain('/plugins/feature.js?rev=feature')
     expect(inner.observations.map(observation => observation.url)).not.toContain('/plugins/layout.js?rev=layout')
     expect(inner.observations.map(observation => observation.url)).not.toContain('/plugins/application.js?rev=stock')
+  })
+
+  it('keeps the mobile boot resource and ETag stable when upstream batch entries reorder', async () => {
+    const inner = await upstream('batched')
+    const directory = await mkdtemp(join(tmpdir(), 'dsh-mobile-batch-order-'))
+    cleanups.push(() => rm(directory, { recursive: true, force: true }))
+    const mobileLayoutFile = join(directory, 'mobile-layout.js')
+    await writeFile(mobileLayoutFile, 'globalThis.__dedicatedMobileLayout = true;\n', 'utf8')
+
+    const firstGateway = await gateway(inner.port, { mobileLayoutFile })
+    const firstPairing = await pair(firstGateway)
+    const firstHeaders = {
+      ...browserHeaders(firstGateway),
+      accept: 'text/html,application/xhtml+xml',
+      cookie: `${SESSION_COOKIE}=${firstPairing.session}`,
+    }
+    const firstPage = await request(firstGateway.address().port, '/', { headers: firstHeaders })
+    const firstPath = /"url":"(\/mobile-access\/mobile-boot\/[a-f\d]{64}\.js)"/u.exec(firstPage.body)?.[1]
+    expect(firstPath).toBeDefined()
+    const firstBatch = await request(firstGateway.address().port, firstPath!, { headers: firstHeaders })
+    expect(firstBatch.status).toBe(200)
+
+    inner.setBatchEntriesReversed(true)
+    const secondGateway = await gateway(inner.port, { mobileLayoutFile })
+    const secondPairing = await pair(secondGateway)
+    const secondHeaders = {
+      ...browserHeaders(secondGateway),
+      accept: 'text/html,application/xhtml+xml',
+      cookie: `${SESSION_COOKIE}=${secondPairing.session}`,
+    }
+    const secondPage = await request(secondGateway.address().port, '/', { headers: secondHeaders })
+    const secondPath = /"url":"(\/mobile-access\/mobile-boot\/[a-f\d]{64}\.js)"/u.exec(secondPage.body)?.[1]
+    expect(secondPath).toBe(firstPath)
+    const cached = await request(secondGateway.address().port, secondPath!, {
+      headers: { ...secondHeaders, 'if-none-match': String(firstBatch.headers.etag) },
+    })
+    expect(cached.status).toBe(304)
+    expect(cached.rawBody).toHaveLength(0)
+    const secondBatch = await request(secondGateway.address().port, secondPath!, { headers: secondHeaders })
+    expect(secondBatch.status).toBe(200)
+    expect(secondBatch.rawBody).toEqual(firstBatch.rawBody)
+    expect(secondBatch.headers.etag).toBe(firstBatch.headers.etag)
   })
 
   it('serves a DSH 0.1.7 mobile application batch with document-relative plugin URLs', async () => {
