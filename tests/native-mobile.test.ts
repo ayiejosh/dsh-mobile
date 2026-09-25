@@ -425,7 +425,8 @@ describe('header strip pan', () => {
   it('keeps a tap a tap and only pans past the threshold', () => {
     const source = installNativeMobileSurface.toString()
     expect(source).toContain('STRIP_DRAG_THRESHOLD_PX')
-    expect(source).toContain('if (!stripMoved && Math.abs(travelled) < STRIP_DRAG_THRESHOLD_PX) return')
+    expect(source).toContain('if (!stripClaimed) {')
+    expect(source).toContain('const travelled = clientX - stripDrag.startX')
     // A mouse drags to select text; only a finger pans.
     expect(source).toContain('if (event.pointerType === "mouse") return')
   })
@@ -482,5 +483,37 @@ describe('header strip coast', () => {
     const source = installNativeMobileSurface.toString()
     expect(source).toContain('STRIP_COAST_SMOOTHING')
     expect(source).toContain('stripVelocity * (1 - STRIP_COAST_SMOOTHING)')
+  })
+})
+
+describe('header strip gesture sources', () => {
+  it('pans from the touch stream as well as the pointer stream', () => {
+    // A finger starting on a control — a chip trigger, an icon button — makes the browser
+    // take the gesture and fire pointercancel after the first move, while touchmove keeps
+    // arriving. Without the touch source the strip pans from the session title but not from
+    // any control beside it, which is exactly what the reporter saw.
+    const source = installNativeMobileSurface.toString()
+    expect(source).toContain('const onStripTouchMove')
+    // The listener is registered non-passive so the pan can preventDefault the scroll.
+    expect(source).toContain('document.addEventListener("touchmove", onStripTouchMove')
+    expect(source).toContain('passive: false')
+    expect(source).toContain('document.addEventListener("touchend", onStripPointerUp, true)')
+    expect(source).toContain('document.addEventListener("touchcancel", onStripPointerUp, true)')
+    expect(source).toContain('document.removeEventListener("touchmove", onStripTouchMove')
+  })
+
+  it('derives the pan from the gesture origin so a double-reported move cannot double it', () => {
+    // The browser reports one movement as both a pointer and a touch event, so the pan is
+    // computed from the start rather than accumulated.
+    const source = installNativeMobileSurface.toString()
+    expect(source).toContain('const travelled = clientX - stripDrag.startX')
+    expect(source).toContain('stripDrag.startOffset - travelled')
+    expect(source).not.toContain('stripOffset -=')
+  })
+
+  it('lets a mostly vertical drag go so the page still scrolls', () => {
+    const source = installNativeMobileSurface.toString()
+    expect(source).toContain('const drift = clientY - stripDrag.startY')
+    expect(source).toContain('if (Math.abs(drift) > Math.abs(travelled))')
   })
 })

@@ -708,7 +708,8 @@ export function installNativeMobileSurface(): () => void {
   // header's left edge instead of under its own pill. A transform clips nothing and carries
   // the popovers with the strip, so the gesture and the popovers both keep working.
   let stripOffset = 0
-  let stripDrag: { readonly startX: number; readonly startOffset: number } | undefined
+  let stripDrag: { readonly startX: number; readonly startY: number; readonly startOffset: number } | undefined
+  let stripClaimed = false
   let stripMoved = false
   let stripFrame = 0
   let stripVelocity = 0
@@ -779,24 +780,50 @@ export function installNativeMobileSurface(): () => void {
     }
     stripFrame = window.requestAnimationFrame(step)
   }
+  /**
+   * Move the strip to follow a finger.
+   *
+   * The position is derived from the gesture's origin rather than accumulated, so a browser
+   * that reports the same point twice — which it does when it delivers both a pointer and a
+   * touch event for one movement — cannot double the pan.
+   * @param clientX - current finger position.
+   * @param clientY - current finger position.
+   * @returns whether the strip now owns the gesture.
+   */
+  const panStripTo = (clientX: number, clientY: number): boolean => {
+    if (stripDrag === undefined) return false
+    const travelled = clientX - stripDrag.startX
+    if (!stripClaimed) {
+      const drift = clientY - stripDrag.startY
+      // Below the threshold it is still a tap; a mostly vertical drag is a page scroll and
+      // the strip lets it go.
+      if (Math.abs(travelled) < STRIP_DRAG_THRESHOLD_PX && Math.abs(drift) < STRIP_DRAG_THRESHOLD_PX) return false
+      if (Math.abs(drift) > Math.abs(travelled)) {
+        stripDrag = undefined
+        return false
+      }
+      stripClaimed = true
+      stripMoved = true
+    }
+    stripOffset = Math.min(stripRange(), Math.max(0, stripDrag.startOffset - travelled))
+    applyStrip()
+    return true
+  }
   const onStripPointerDown = (event: PointerEvent): void => {
     // A mouse drags to select; only a finger pans the strip.
     if (event.pointerType === 'mouse') return
     if (!(event.target instanceof Element) || event.target.closest('header') === null) return
     if (stripRange() === 0) return
     cancelStripCoast()
-    stripDrag = { startX: event.clientX, startOffset: stripOffset }
+    stripDrag = { startX: event.clientX, startY: event.clientY, startOffset: stripOffset }
+    stripClaimed = false
     stripMoved = false
     stripVelocity = 0
     stripSampleX = event.clientX
     stripSampleAt = event.timeStamp
   }
   const onStripPointerMove = (event: PointerEvent): void => {
-    if (stripDrag === undefined) return
-    const travelled = event.clientX - stripDrag.startX
-    // Below the threshold the gesture is still a tap, so the chip under it can open.
-    if (!stripMoved && Math.abs(travelled) < STRIP_DRAG_THRESHOLD_PX) return
-    stripMoved = true
+    if (!panStripTo(event.clientX, event.clientY)) return
     const elapsed = event.timeStamp - stripSampleAt
     if (elapsed > 0) {
       // Smoothed so one jittery sample cannot fling the strip across the screen.
@@ -804,8 +831,20 @@ export function installNativeMobileSurface(): () => void {
       stripSampleX = event.clientX
       stripSampleAt = event.timeStamp
     }
-    stripOffset = Math.min(stripRange(), Math.max(0, stripDrag.startOffset - travelled))
-    applyStrip()
+    event.preventDefault()
+  }
+  /**
+   * Pan from the touch stream as well.
+   *
+   * A finger that starts on a control — a chip trigger, an icon button — makes the browser
+   * take the gesture for itself and fire `pointercancel` after the first move, while
+   * `touchmove` keeps arriving. Without this the strip pans from the plain session title but
+   * not from any of the controls beside it.
+   */
+  const onStripTouchMove = (event: TouchEvent): void => {
+    const touch = event.touches[0]
+    if (touch === undefined) return
+    if (!panStripTo(touch.clientX, touch.clientY)) return
     event.preventDefault()
   }
   const onStripPointerUp = (): void => {
@@ -824,6 +863,9 @@ export function installNativeMobileSurface(): () => void {
   document.addEventListener('pointermove', onStripPointerMove, { capture: true, passive: false })
   document.addEventListener('pointerup', onStripPointerUp, true)
   document.addEventListener('pointercancel', onStripPointerUp, true)
+  document.addEventListener('touchmove', onStripTouchMove, { capture: true, passive: false })
+  document.addEventListener('touchend', onStripPointerUp, true)
+  document.addEventListener('touchcancel', onStripPointerUp, true)
   document.addEventListener('click', onStripClickCapture, true)
   let frame: HTMLElement | undefined
   let sidebar: HTMLElement | undefined
@@ -1084,6 +1126,9 @@ export function installNativeMobileSurface(): () => void {
     document.removeEventListener('pointermove', onStripPointerMove, true)
     document.removeEventListener('pointerup', onStripPointerUp, true)
     document.removeEventListener('pointercancel', onStripPointerUp, true)
+    document.removeEventListener('touchmove', onStripTouchMove, true)
+    document.removeEventListener('touchend', onStripPointerUp, true)
+    document.removeEventListener('touchcancel', onStripPointerUp, true)
     document.removeEventListener('click', onStripClickCapture, true)
     cancelStripCoast()
     stripVelocity = 0
