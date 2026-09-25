@@ -310,6 +310,31 @@ export function drawerScrimVisible(sidebarCollapsed: boolean, overlayActive: boo
   return !sidebarCollapsed && overlayActive
 }
 
+/**
+ * Whether one composer keydown asks for a draft line break on a device whose
+ * soft keyboard has no usable Shift.
+ *
+ * The composer editor breaks the line only for Shift+Enter and submits on a
+ * plain Enter. Android's return key is a plain Enter, so every attempt at a
+ * newline sent the draft instead. Composing keys are excluded: an IME reports
+ * the in-flight key as 229 while it owns the text, and that key belongs to the
+ * candidate window, not to the draft.
+ * @param event - the composer's keydown, read for its key and modifiers.
+ * @returns whether the event is a plain, settled Enter.
+ */
+export function isSoftKeyboardEnterLineBreak(event: {
+  readonly key: string
+  readonly shiftKey: boolean
+  readonly altKey: boolean
+  readonly ctrlKey: boolean
+  readonly metaKey: boolean
+  readonly isComposing: boolean
+  readonly keyCode: number
+}): boolean {
+  if (event.key !== 'Enter' || event.isComposing || event.keyCode === 229) return false
+  return !event.shiftKey && !event.altKey && !event.ctrlKey && !event.metaKey
+}
+
 interface ComposerMediaOrigin {
   readonly generation: number
   readonly href: string
@@ -430,6 +455,7 @@ export function installNativeMobileSurface(): () => void {
   const canAcceptComposerDrop = (): boolean => preflightComposerImageDrop(document, [preflightFile])
   const mediaPickerAbortController = new AbortController()
   const browserPickerCleanups = new Set<() => void>()
+  const composerEnterCleanups = new WeakMap<HTMLElement, () => void>()
   const sessionTokens = new WeakMap<Element, string>()
   let nextSessionToken = 0
   type MediaRequestContext = ComposerMediaOrigin & { readonly composer: Element | null; readonly sessionRoot: Element | null }
@@ -702,6 +728,34 @@ export function installNativeMobileSurface(): () => void {
     })
   }
   document.addEventListener('click', animateNavigation)
+  const installComposerEnterNewline = (composerCard: HTMLElement): void => {
+    if (composerCard.dataset.dshMobileEnterBound === 'true') return
+    const editor = composerCard.querySelector<HTMLElement>('[contenteditable="true"],[contenteditable="plaintext-only"]')
+    if (editor === null) return
+    composerCard.dataset.dshMobileEnterBound = 'true'
+    // The hint only labels the key; the line break itself comes from the
+    // re-dispatched Shift+Enter below.
+    editor.setAttribute('enterkeyhint', 'enter')
+    const onKeyDown = (event: KeyboardEvent): void => {
+      if (!isSoftKeyboardEnterLineBreak(event)) return
+      event.preventDefault()
+      event.stopPropagation()
+      editor.dispatchEvent(new KeyboardEvent('keydown', {
+        key: 'Enter',
+        code: 'Enter',
+        shiftKey: true,
+        bubbles: true,
+        cancelable: true,
+        composed: true,
+        // The editor reads these legacy fields, which the standard init type omits.
+        ...({ keyCode: 13, which: 13 } as KeyboardEventInit),
+      }))
+    }
+    // Capture phase: the composer's own handler must never see the unshifted
+    // event, or it would submit the draft.
+    editor.addEventListener('keydown', onKeyDown, true)
+    composerEnterCleanups.set(editor, () => { editor.removeEventListener('keydown', onKeyDown, true) })
+  }
   const syncMediaBinding = (composer: Element | null): void => {
     const previousComposer = boundComposer
     boundComposer = composer
@@ -780,6 +834,7 @@ export function installNativeMobileSurface(): () => void {
         if (composerTools !== undefined) {
           composerTools.dataset.dshMobileComposerTools = 'true'
           syncMediaBinding(composerCard ?? null)
+          if (composerCard instanceof HTMLElement) installComposerEnterNewline(composerCard)
           const composerInput = composerCard?.querySelector<HTMLTextAreaElement>('textarea')
           const composerEditor = composerCard?.querySelector<HTMLElement>('[contenteditable="true"],[contenteditable="plaintext-only"]')
           const composerBusy = composerCard?.getAttribute('aria-busy') === 'true'
@@ -863,6 +918,15 @@ export function installNativeMobileSurface(): () => void {
     mediaPickerAbortController.abort()
     restoreLanguageMarker()
     for (const cleanup of [...browserPickerCleanups]) cleanup()
+    // A WeakMap cannot be enumerated, so the marker attribute is the record of
+    // every composer the Enter binding reached; the map holds its disposer.
+    for (const root of document.querySelectorAll<HTMLElement>('[data-dsh-mobile-enter-bound="true"]')) {
+      for (const editor of root.querySelectorAll<HTMLElement>('[contenteditable="true"],[contenteditable="plaintext-only"]')) {
+        composerEnterCleanups.get(editor)?.()
+        composerEnterCleanups.delete(editor)
+      }
+      delete root.dataset.dshMobileEnterBound
+    }
     observer.disconnect()
     overlayQuery.removeEventListener('change', schedule)
     document.removeEventListener('click', onBranchClick, true)

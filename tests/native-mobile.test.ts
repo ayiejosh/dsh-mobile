@@ -1,5 +1,6 @@
+import { readFileSync } from 'node:fs'
 import { describe, expect, it } from 'vitest'
-import { applyNativeMobileLanguageMarker, dispatchComposerImageDrop, drawerScrimVisible, installNativeMobileSurface, isComposerMediaOriginCurrent, markNativeMobileSettings, NATIVE_MOBILE_OVERLAY_QUERY, NATIVE_MOBILE_STYLES, preflightComposerImageDrop, resolveNativeMobileFrame, resolveNativeMobileLanguage, shouldAutoLoadEarlier } from '../src/native-mobile.js'
+import { applyNativeMobileLanguageMarker, dispatchComposerImageDrop, drawerScrimVisible, installNativeMobileSurface, isComposerMediaOriginCurrent, isSoftKeyboardEnterLineBreak, markNativeMobileSettings, NATIVE_MOBILE_OVERLAY_QUERY, NATIVE_MOBILE_STYLES, preflightComposerImageDrop, resolveNativeMobileFrame, resolveNativeMobileLanguage, shouldAutoLoadEarlier } from '../src/native-mobile.js'
 
 interface FakeElementOptions {
   readonly children?: readonly HTMLElement[]
@@ -263,5 +264,69 @@ describe('native mobile presentation', () => {
     expect(NATIVE_MOBILE_STYLES).toContain('@keyframes dsh-mobile-view-in')
     expect(NATIVE_MOBILE_STYLES).toContain('@media (prefers-reduced-motion:reduce)')
     expect(NATIVE_MOBILE_STYLES).not.toContain('dsh-native-mobile-sheet')
+  })
+})
+
+/** One composer keydown, with every modifier the line-break decision reads. */
+function enterEvent(overrides: Partial<{
+  key: string
+  shiftKey: boolean
+  altKey: boolean
+  ctrlKey: boolean
+  metaKey: boolean
+  isComposing: boolean
+  keyCode: number
+}> = {}): Parameters<typeof isSoftKeyboardEnterLineBreak>[0] {
+  return {
+    key: 'Enter',
+    shiftKey: false,
+    altKey: false,
+    ctrlKey: false,
+    metaKey: false,
+    isComposing: false,
+    keyCode: 13,
+    ...overrides,
+  }
+}
+
+describe('composer soft-keyboard Enter', () => {
+  it('breaks the line for the plain Enter an Android keyboard sends', () => {
+    expect(isSoftKeyboardEnterLineBreak(enterEvent())).toBe(true)
+  })
+
+  it('leaves every modified Enter to the composer', () => {
+    // Shift+Enter already breaks the line, and the accelerated chords submit on
+    // purpose, so re-dispatching any of them would change documented behaviour.
+    expect(isSoftKeyboardEnterLineBreak(enterEvent({ shiftKey: true }))).toBe(false)
+    expect(isSoftKeyboardEnterLineBreak(enterEvent({ altKey: true }))).toBe(false)
+    expect(isSoftKeyboardEnterLineBreak(enterEvent({ ctrlKey: true }))).toBe(false)
+    expect(isSoftKeyboardEnterLineBreak(enterEvent({ metaKey: true }))).toBe(false)
+  })
+
+  it('ignores every other key', () => {
+    expect(isSoftKeyboardEnterLineBreak(enterEvent({ key: 'a' }))).toBe(false)
+    expect(isSoftKeyboardEnterLineBreak(enterEvent({ key: 'Escape' }))).toBe(false)
+    expect(isSoftKeyboardEnterLineBreak(enterEvent({ key: 'Tab' }))).toBe(false)
+  })
+
+  it('ignores an Enter the IME still owns', () => {
+    // An in-flight composition reports 229 while the candidate window owns the
+    // key; treating that as a draft break would fight the IME.
+    expect(isSoftKeyboardEnterLineBreak(enterEvent({ isComposing: true }))).toBe(false)
+    expect(isSoftKeyboardEnterLineBreak(enterEvent({ keyCode: 229 }))).toBe(false)
+  })
+
+  it('re-dispatches the break as Shift+Enter on capture', () => {
+    const source = readFileSync(new URL('../src/native-mobile.ts', import.meta.url), 'utf8')
+    expect(source).toContain("editor.addEventListener('keydown', onKeyDown, true)")
+    expect(source).toContain("editor.removeEventListener('keydown', onKeyDown, true)")
+    expect(source).toContain('shiftKey: true')
+    expect(source).toContain("editor.setAttribute('enterkeyhint', 'enter')")
+  })
+
+  it('unbinds every composer it touched when the surface goes away', () => {
+    const source = readFileSync(new URL('../src/native-mobile.ts', import.meta.url), 'utf8')
+    expect(source).toContain('[data-dsh-mobile-enter-bound="true"]')
+    expect(source).toContain('delete root.dataset.dshMobileEnterBound')
   })
 })
