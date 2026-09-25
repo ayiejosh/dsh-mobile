@@ -1,6 +1,17 @@
 package io.github.sayach.dshmobile
 
+import android.content.res.Configuration
 import java.io.File
+
+/** Only an inset-backed IME with no attached hardware keyboard permits App-side Enter translation. */
+internal data class NativeKeyboardState(val imeVisible: Boolean, val noHardwareKeyboard: Boolean) {
+    val permitsSoftEnterLineBreak: Boolean get() = imeVisible && noHardwareKeyboard
+}
+
+internal fun resolveNativeKeyboardState(imeInset: Int, keyboard: Int): NativeKeyboardState = NativeKeyboardState(
+    imeVisible = imeInset > 0,
+    noHardwareKeyboard = keyboard == Configuration.KEYBOARD_NOKEYS,
+)
 
 /** Thread-safe duplicate/capacity gate; entries live until their terminal reply. */
 internal class PendingRequestRegistry<T>(private val maxPending: Int) {

@@ -240,11 +240,13 @@ class MainActivity : Activity() {
         super.onResume()
         nativeBridge?.onHostResumed()
         webView?.onResume()
+        window.decorView.requestApplyInsets()
         if (deviceListVisible && showingSetup) refreshDeviceStatuses(pairedDeviceStore.load())
     }
 
     override fun onPause() {
         pauseDeviceListRefresh()
+        nativeBridge?.updateKeyboardState(NativeKeyboardState(false, false))
         webView?.onPause()
         CookieManager.getInstance().flush()
         super.onPause()
@@ -2148,6 +2150,7 @@ class MainActivity : Activity() {
         root.setOnApplyWindowInsetsListener { _, insets ->
             val top = resolveTopSafeInset(insets)
             val ime = resolveWebViewImeInset(insets)
+            nativeBridge?.updateKeyboardState(resolveNativeKeyboardState(ime, resources.configuration.keyboard))
             browser.layoutParams = FrameLayout.LayoutParams(
                 ViewGroup.LayoutParams.MATCH_PARENT,
                 ViewGroup.LayoutParams.MATCH_PARENT,
