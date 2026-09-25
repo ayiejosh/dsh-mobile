@@ -435,7 +435,17 @@ export function parseMobileBootPlan(html: string): MobileBootPlanRef {
     throw new Error('upstream DSH boot manifest has no unique application layout batch')
   }
   const layoutBatch = layoutBatches[0]
-  const planEntries = layoutBatch.entries.map((id): MobileBootBatchEntry => {
+  // Canonical entry order. Upstream lists one application batch's entries in
+  // module-registration order, which is not stable across restarts of an
+  // unchanged configuration. `splitMobileBootBatch` derives the batch key, the
+  // merged chunk boundaries, and the concatenation order of the assembled body
+  // from this sequence, so an unstable order re-hashes every batch after each
+  // restart — and, because the body hash is the `ETag`, it also changes the
+  // validator. Every paired device then re-downloads the whole boot payload
+  // even though no module changed. Entry ids are unique (the map above rejects
+  // duplicates), so sorting them is a total order.
+  const orderedEntryIds = [...layoutBatch.entries].sort((left, right) => (left < right ? -1 : left > right ? 1 : 0))
+  const planEntries = orderedEntryIds.map((id): MobileBootBatchEntry => {
     const entry = entryById.get(id)
     if (entry === undefined || typeof entry.url !== 'string' || typeof entry.rev !== 'string') {
       throw new Error('upstream DSH boot manifest batches are malformed')

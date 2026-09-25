@@ -785,8 +785,14 @@ describe('HTTP gateway', () => {
     expect(batch.body).toContain('__dedicatedMobileLayout = true')
     expect(batch.body).toContain('/plugins/feature.js?rev=feature')
     expect(batch.body).not.toContain('/plugins/layout.js?rev=layout')
-    expect(batch.body.indexOf('renderer.js')).toBeLessThan(batch.body.indexOf('__dedicatedMobileLayout'))
-    expect(batch.body.indexOf('__dedicatedMobileLayout')).toBeLessThan(batch.body.indexOf('feature.js'))
+    // A merged batch only registers each module's factory
+    // (`window.__ModuleLoader__.load({ id, factory })`); `require` runs at
+    // materialization and dependencies resolve through `inject`, so the order of
+    // the concatenated bodies carries no contract. It is canonical (entry ids
+    // sorted) all the same, so the batch key and its `ETag` stay stable when
+    // upstream re-lists an unchanged module set in a different order.
+    expect(batch.body.indexOf('__dedicatedMobileLayout')).toBeLessThan(batch.body.indexOf('renderer.js'))
+    expect(batch.body.indexOf('renderer.js')).toBeLessThan(batch.body.indexOf('feature.js'))
 
     const compressed = await request(instance.address().port, path, {
       headers: { ...headers, 'accept-encoding': 'gzip' },
