@@ -147,6 +147,18 @@ describe('DSH source compatibility gate', () => {
     expect(result.output).toContain('DSH layout contract changed')
   })
 
+  it('accepts the layout service as the panelInfo hook source in DSH 0.1.7-rc.2', async () => {
+    const sources = sourceFixture('0.1.7-rc.2')
+    const path = 'packages/client/ui-layout/src/client/index.ts'
+    sources[path] = sources[path]!.replace(
+      'ctx.slots.provideRoot({ hooks: { panelInfo } })',
+      'ctx.slots.provideRoot({ hooks: { panelInfo: layout.panelInfo } })',
+    )
+    const result = await check(sources)
+    expect(result.status).toBe(0)
+    expect(result.output).toContain('DSH compatibility ok: 0.1.7-rc.2 (renderer-v2)')
+  })
+
   it('accepts the conversation scroll marker after the skeleton is split across files', async () => {
     const sources = sourceFixture()
     sources['packages/client/ui-conversation/src/client/skeleton/ConversationRoot.tsx'] = 'export function ConversationRoot() { return null }'
