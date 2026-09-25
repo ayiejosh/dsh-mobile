@@ -10,6 +10,8 @@ Notable changes to DSH Mobile are recorded here. GitHub Releases remain the sour
 - Extend source-contract and isolated browser-startup checks to DSH `0.1.7-rc.2`, alongside `0.1.7-alpha.2` and `0.1.7-rc.1`.
 - Add opt-in `excludedClientModules` for mobile-only boot slimming. Exact package ids are checked against the live graph; boot-critical entries and modules still required by retained entries are refused. The default graph, desktop page, and stock frontend remain unchanged (thanks @xhwxt for [#108](https://github.com/saya-ch/dsh-mobile/issues/108)).
 - Let the right sidebar fill the phone viewport instead of clipping file and plugin panels behind a narrow overlay edge; keep the wide-screen column layout and a reachable collapse control.
+- Keep the on-screen keyboard closed when opening the composer Add menu, without affecting other listbox controls (thanks @ayiejosh for [PR #109](https://github.com/saya-ch/dsh-mobile/pull/109)).
+- In the Android App, use plain Enter to add a draft line when the on-screen keyboard is visible and no hardware keyboard is attached; retain DSH's original Enter behavior for browsers, unknown keyboard state, menus and IME composition (thanks @ayiejosh for [PR #110](https://github.com/saya-ch/dsh-mobile/pull/110)).
 - Clear the Android page-load timer when WebView reports the same root document with a normalized URL, preventing a completed load from becoming a delayed false timeout. After native session renewal, keep a live DSH WebView instead of rebuilding it; reload only when the document is unavailable, and bound repeated renderer-crash recovery.
 
 ## 0.4.6 - 2026-09-24

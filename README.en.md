@@ -31,7 +31,7 @@
 
 > DSH Mobile is a DeepSeek Harness community plugin; the native app supports Android only.
 >
-> **Current version: 0.4.7**. It supports DSH `0.1.7-rc.2`, avoids duplicate mobile boot downloads, and improves Android recovery and the phone-width sidebar. [Release notes](CHANGELOG.md#047---2026-09-25).
+> **Current version: 0.4.7**. It supports DSH `0.1.7-rc.2`, avoids duplicate mobile boot downloads, and improves Android recovery, the phone-width sidebar, and input handling. [Release notes](CHANGELOG.md#047---2026-09-25).
 >
 > **Upgrade reminder**: update both the plugin and Android app to 0.4.7 when practical. Existing pairings remain intact. The self-signed FRP entry requires at least the 0.4.6 app; older apps can still use existing LAN and trusted-certificate remote connections. [Compatibility notes](#compatibility).
 
