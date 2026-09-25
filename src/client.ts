@@ -97,6 +97,7 @@ declare global {
       capabilities(): Promise<readonly string[]> | readonly string[]
       invoke(action: string, input?: unknown): Promise<unknown>
     }
+    __DSH_MOBILE_KEYBOARD_STATE__?: { readonly imeVisible: boolean; readonly noHardwareKeyboard: boolean } | null
   }
 }
 

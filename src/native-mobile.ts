@@ -310,29 +310,52 @@ export function drawerScrimVisible(sidebarCollapsed: boolean, overlayActive: boo
   return !sidebarCollapsed && overlayActive
 }
 
-/**
- * Whether one composer keydown asks for a draft line break on a device whose
- * soft keyboard has no usable Shift.
- *
- * The composer editor breaks the line only for Shift+Enter and submits on a
- * plain Enter. Android's return key is a plain Enter, so every attempt at a
- * newline sent the draft instead. Composing keys are excluded: an IME reports
- * the in-flight key as 229 while it owns the text, and that key belongs to the
- * candidate window, not to the draft.
- * @param event - the composer's keydown, read for its key and modifiers.
- * @returns whether the event is a plain, settled Enter.
- */
-export function isSoftKeyboardEnterLineBreak(event: {
-  readonly key: string
-  readonly shiftKey: boolean
-  readonly altKey: boolean
-  readonly ctrlKey: boolean
-  readonly metaKey: boolean
-  readonly isComposing: boolean
-  readonly keyCode: number
-}): boolean {
-  if (event.key !== 'Enter' || event.isComposing || event.keyCode === 229) return false
-  return !event.shiftKey && !event.altKey && !event.ctrlKey && !event.metaKey
+interface SoftEnterContext {
+  readonly nativeState: { readonly imeVisible: boolean; readonly noHardwareKeyboard: boolean } | null | undefined
+  readonly editable: boolean
+  readonly activeSession: boolean
+  readonly commandMenuOpen: boolean
+  readonly recentlyComposing: boolean
+}
+
+/** Only a known on-screen keyboard in an active App composer may change Enter into a line break. */
+export function isSoftKeyboardEnterLineBreak(event: KeyboardEvent, context: SoftEnterContext): boolean {
+  if (context.nativeState?.imeVisible !== true || context.nativeState.noHardwareKeyboard !== true
+    || !context.editable || !context.activeSession || context.commandMenuOpen || context.recentlyComposing) return false
+  if (!event.isTrusted || event.key !== 'Enter' || event.isComposing || event.keyCode === 229 || event.repeat) return false
+  return !event.shiftKey && !event.altKey && !event.ctrlKey && !event.metaKey && !event.getModifierState('AltGraph')
+}
+
+/** Attach the App-only Enter translation while retaining DSH's original physical-key semantics. */
+export function bindComposerSoftEnter(editor: HTMLElement, context: () => Omit<SoftEnterContext, 'recentlyComposing'>): () => void {
+  let composing = false
+  let composingUntil = 0
+  const onCompositionStart = (): void => { composing = true }
+  const onCompositionEnd = (): void => { composing = false; composingUntil = performance.now() + 10 }
+  const onKeyDown = (event: KeyboardEvent): void => {
+    if (!isSoftKeyboardEnterLineBreak(event, {
+      ...context(),
+      recentlyComposing: composing || editor.hasAttribute('data-composer-composing') || performance.now() < composingUntil,
+    })) return
+    event.preventDefault()
+    event.stopImmediatePropagation()
+    editor.dispatchEvent(new KeyboardEvent('keydown', {
+      key: 'Enter',
+      code: 'Enter',
+      shiftKey: true,
+      bubbles: true,
+      cancelable: true,
+      composed: true,
+    }))
+  }
+  editor.addEventListener('compositionstart', onCompositionStart)
+  editor.addEventListener('compositionend', onCompositionEnd)
+  editor.addEventListener('keydown', onKeyDown, { capture: true })
+  return () => {
+    editor.removeEventListener('compositionstart', onCompositionStart)
+    editor.removeEventListener('compositionend', onCompositionEnd)
+    editor.removeEventListener('keydown', onKeyDown, { capture: true })
+  }
 }
 
 interface ComposerMediaOrigin {
@@ -455,7 +478,9 @@ export function installNativeMobileSurface(): () => void {
   const canAcceptComposerDrop = (): boolean => preflightComposerImageDrop(document, [preflightFile])
   const mediaPickerAbortController = new AbortController()
   const browserPickerCleanups = new Set<() => void>()
-  const composerEnterCleanups = new WeakMap<HTMLElement, () => void>()
+  let boundEnterEditor: HTMLElement | null = null
+  let boundEnterCard: HTMLElement | null = null
+  let disposeEnterBinding: (() => void) | undefined
   const sessionTokens = new WeakMap<Element, string>()
   let nextSessionToken = 0
   type MediaRequestContext = ComposerMediaOrigin & { readonly composer: Element | null; readonly sessionRoot: Element | null }
@@ -728,33 +753,20 @@ export function installNativeMobileSurface(): () => void {
     })
   }
   document.addEventListener('click', animateNavigation)
-  const installComposerEnterNewline = (composerCard: HTMLElement): void => {
-    if (composerCard.dataset.dshMobileEnterBound === 'true') return
-    const editor = composerCard.querySelector<HTMLElement>('[contenteditable="true"],[contenteditable="plaintext-only"]')
-    if (editor === null) return
-    composerCard.dataset.dshMobileEnterBound = 'true'
-    // The hint only labels the key; the line break itself comes from the
-    // re-dispatched Shift+Enter below.
-    editor.setAttribute('enterkeyhint', 'enter')
-    const onKeyDown = (event: KeyboardEvent): void => {
-      if (!isSoftKeyboardEnterLineBreak(event)) return
-      event.preventDefault()
-      event.stopPropagation()
-      editor.dispatchEvent(new KeyboardEvent('keydown', {
-        key: 'Enter',
-        code: 'Enter',
-        shiftKey: true,
-        bubbles: true,
-        cancelable: true,
-        composed: true,
-        // The editor reads these legacy fields, which the standard init type omits.
-        ...({ keyCode: 13, which: 13 } as KeyboardEventInit),
-      }))
-    }
-    // Capture phase: the composer's own handler must never see the unshifted
-    // event, or it would submit the draft.
-    editor.addEventListener('keydown', onKeyDown, true)
-    composerEnterCleanups.set(editor, () => { editor.removeEventListener('keydown', onKeyDown, true) })
+  const syncComposerEnterNewline = (composerCard: HTMLElement | null): void => {
+    const editor = composerCard?.querySelector<HTMLElement>('[data-composer-input][contenteditable="true"]') ?? null
+    if (editor === boundEnterEditor && composerCard === boundEnterCard) return
+    disposeEnterBinding?.()
+    boundEnterEditor = editor
+    boundEnterCard = composerCard
+    disposeEnterBinding = editor === null || composerCard === null ? undefined : bindComposerSoftEnter(editor, () => ({
+      nativeState: window.__DSH_MOBILE_NATIVE__ === undefined ? null : window.__DSH_MOBILE_KEYBOARD_STATE__,
+      editable: editor.isConnected && editor.getAttribute('contenteditable') === 'true'
+        && editor.getAttribute('aria-disabled') !== 'true' && editor.getAttribute('aria-haspopup') !== 'menu'
+        && composerCard.getAttribute('aria-busy') !== 'true',
+      activeSession: currentSessionOrigin().sessionId !== null,
+      commandMenuOpen: composerCard.querySelector('[data-trigger-menu],button[aria-haspopup="listbox"][aria-expanded="true"]') !== null,
+    }))
   }
   const syncMediaBinding = (composer: Element | null): void => {
     const previousComposer = boundComposer
@@ -781,6 +793,7 @@ export function installNativeMobileSurface(): () => void {
     const handle = frame === undefined ? undefined : firstByClassSuffix(frame, '_handle')
     markNativeMobileSettings(document)
     if (center === undefined) {
+      syncComposerEnterNewline(null)
       bindHistoryScroller(undefined)
       syncMediaBinding(null)
       setCameraActionDisabled(true, label('Apri prima una sessione', 'Open a session first', '请先打开会话'))
@@ -822,6 +835,7 @@ export function installNativeMobileSurface(): () => void {
       const composerCard = center.querySelector<HTMLElement>('[data-composer-card]')
       const composerRow = composerCard?.querySelector<HTMLElement>(':scope > [data-input-scroll]')?.nextElementSibling
       if (!(composerRow instanceof HTMLElement)) {
+        syncComposerEnterNewline(null)
         syncMediaBinding(null)
         setCameraActionDisabled(true, label('Apri prima una sessione', 'Open a session first', '请先打开会话'))
         cameraButton.remove()
@@ -834,7 +848,7 @@ export function installNativeMobileSurface(): () => void {
         if (composerTools !== undefined) {
           composerTools.dataset.dshMobileComposerTools = 'true'
           syncMediaBinding(composerCard ?? null)
-          if (composerCard instanceof HTMLElement) installComposerEnterNewline(composerCard)
+          syncComposerEnterNewline(composerCard ?? null)
           const composerInput = composerCard?.querySelector<HTMLTextAreaElement>('textarea')
           const composerEditor = composerCard?.querySelector<HTMLElement>('[contenteditable="true"],[contenteditable="plaintext-only"]')
           const composerBusy = composerCard?.getAttribute('aria-busy') === 'true'
@@ -854,7 +868,7 @@ export function installNativeMobileSurface(): () => void {
           const commandMenu = composerCard?.querySelector<HTMLElement>('[data-trigger-menu]') ?? null
           if (commandMenu !== null) placeCameraAction(commandMenu)
           else cameraButton.remove()
-        }
+        } else syncComposerEnterNewline(null)
         if (composerTrailing !== undefined && composerTrailing !== composerTools) {
           composerTrailing.dataset.dshMobileComposerTrailing = 'true'
           const modelTrigger = composerTrailing.querySelector<HTMLButtonElement>('button[aria-label^="选择模型"],button[aria-label^="Select model"],button[aria-label^="Seleziona modello"]')
@@ -918,15 +932,7 @@ export function installNativeMobileSurface(): () => void {
     mediaPickerAbortController.abort()
     restoreLanguageMarker()
     for (const cleanup of [...browserPickerCleanups]) cleanup()
-    // A WeakMap cannot be enumerated, so the marker attribute is the record of
-    // every composer the Enter binding reached; the map holds its disposer.
-    for (const root of document.querySelectorAll<HTMLElement>('[data-dsh-mobile-enter-bound="true"]')) {
-      for (const editor of root.querySelectorAll<HTMLElement>('[contenteditable="true"],[contenteditable="plaintext-only"]')) {
-        composerEnterCleanups.get(editor)?.()
-        composerEnterCleanups.delete(editor)
-      }
-      delete root.dataset.dshMobileEnterBound
-    }
+    disposeEnterBinding?.()
     observer.disconnect()
     overlayQuery.removeEventListener('change', schedule)
     document.removeEventListener('click', onBranchClick, true)

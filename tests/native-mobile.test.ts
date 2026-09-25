@@ -1,6 +1,6 @@
 import { readFileSync } from 'node:fs'
-import { describe, expect, it } from 'vitest'
-import { applyNativeMobileLanguageMarker, dispatchComposerImageDrop, drawerScrimVisible, installNativeMobileSurface, isComposerMediaOriginCurrent, isSoftKeyboardEnterLineBreak, markNativeMobileSettings, NATIVE_MOBILE_OVERLAY_QUERY, NATIVE_MOBILE_STYLES, preflightComposerImageDrop, resolveNativeMobileFrame, resolveNativeMobileLanguage, shouldAutoLoadEarlier } from '../src/native-mobile.js'
+import { afterEach, describe, expect, it, vi } from 'vitest'
+import { applyNativeMobileLanguageMarker, bindComposerSoftEnter, dispatchComposerImageDrop, drawerScrimVisible, installNativeMobileSurface, isComposerMediaOriginCurrent, isSoftKeyboardEnterLineBreak, markNativeMobileSettings, NATIVE_MOBILE_OVERLAY_QUERY, NATIVE_MOBILE_STYLES, preflightComposerImageDrop, resolveNativeMobileFrame, resolveNativeMobileLanguage, shouldAutoLoadEarlier } from '../src/native-mobile.js'
 
 interface FakeElementOptions {
   readonly children?: readonly HTMLElement[]
@@ -267,66 +267,138 @@ describe('native mobile presentation', () => {
   })
 })
 
-/** One composer keydown, with every modifier the line-break decision reads. */
-function enterEvent(overrides: Partial<{
-  key: string
-  shiftKey: boolean
-  altKey: boolean
-  ctrlKey: boolean
-  metaKey: boolean
-  isComposing: boolean
-  keyCode: number
-}> = {}): Parameters<typeof isSoftKeyboardEnterLineBreak>[0] {
-  return {
-    key: 'Enter',
-    shiftKey: false,
-    altKey: false,
-    ctrlKey: false,
-    metaKey: false,
-    isComposing: false,
-    keyCode: 13,
-    ...overrides,
+class TestKeyboardEvent extends Event {
+  readonly key: string
+  readonly shiftKey: boolean
+  readonly altKey: boolean
+  readonly ctrlKey: boolean
+  readonly metaKey: boolean
+  readonly isComposing: boolean
+  readonly keyCode: number
+  readonly repeat: boolean
+  private readonly altGraph: boolean
+  constructor(type: string, init: KeyboardEventInit & { trusted?: boolean; altGraph?: boolean; keyCode?: number } = {}) {
+    super(type, init)
+    this.key = init.key ?? ''
+    this.shiftKey = init.shiftKey ?? false
+    this.altKey = init.altKey ?? false
+    this.ctrlKey = init.ctrlKey ?? false
+    this.metaKey = init.metaKey ?? false
+    this.isComposing = init.isComposing ?? false
+    this.keyCode = init.keyCode ?? 13
+    this.repeat = init.repeat ?? false
+    this.altGraph = init.altGraph ?? false
+    if (init.trusted === true) Object.defineProperty(this, 'isTrusted', { value: true })
   }
+  getModifierState(name: string): boolean { return name === 'AltGraph' && this.altGraph }
 }
 
+function fakeComposerEditor(): { editor: HTMLElement; attributes: Map<string, string> } {
+  const attributes = new Map([['contenteditable', 'true']])
+  const editor = Object.assign(new EventTarget(), {
+    isConnected: true,
+    getAttribute: (name: string) => attributes.get(name) ?? null,
+    hasAttribute: (name: string) => attributes.has(name),
+  }) as unknown as HTMLElement
+  return { editor, attributes }
+}
+
+const eligibleContext = () => ({
+  nativeState: { imeVisible: true, noHardwareKeyboard: true },
+  editable: true,
+  activeSession: true,
+  commandMenuOpen: false,
+  recentlyComposing: false,
+})
+
 describe('composer soft-keyboard Enter', () => {
-  it('breaks the line for the plain Enter an Android keyboard sends', () => {
-    expect(isSoftKeyboardEnterLineBreak(enterEvent())).toBe(true)
+  afterEach(() => { vi.unstubAllGlobals(); vi.restoreAllMocks() })
+
+  it('requires an exact native soft-keyboard signal and a live, unobstructed session editor', () => {
+    const event = new TestKeyboardEvent('keydown', { key: 'Enter', trusted: true }) as unknown as KeyboardEvent
+    expect(isSoftKeyboardEnterLineBreak(event, eligibleContext())).toBe(true)
+    const context = eligibleContext()
+    expect(isSoftKeyboardEnterLineBreak(event, { ...context, nativeState: null })).toBe(false)
+    expect(isSoftKeyboardEnterLineBreak(event, { ...context, nativeState: { imeVisible: false, noHardwareKeyboard: true } })).toBe(false)
+    expect(isSoftKeyboardEnterLineBreak(event, { ...context, nativeState: { imeVisible: true, noHardwareKeyboard: false } })).toBe(false)
+    expect(isSoftKeyboardEnterLineBreak(event, { ...context, editable: false })).toBe(false)
+    expect(isSoftKeyboardEnterLineBreak(event, { ...context, activeSession: false })).toBe(false)
+    expect(isSoftKeyboardEnterLineBreak(event, { ...context, commandMenuOpen: true })).toBe(false)
+    expect(isSoftKeyboardEnterLineBreak(event, { ...context, recentlyComposing: true })).toBe(false)
   })
 
-  it('leaves every modified Enter to the composer', () => {
-    // Shift+Enter already breaks the line, and the accelerated chords submit on
-    // purpose, so re-dispatching any of them would change documented behaviour.
-    expect(isSoftKeyboardEnterLineBreak(enterEvent({ shiftKey: true }))).toBe(false)
-    expect(isSoftKeyboardEnterLineBreak(enterEvent({ altKey: true }))).toBe(false)
-    expect(isSoftKeyboardEnterLineBreak(enterEvent({ ctrlKey: true }))).toBe(false)
-    expect(isSoftKeyboardEnterLineBreak(enterEvent({ metaKey: true }))).toBe(false)
+  it('preserves synthetic, modified, repeated, and composing Enter events', () => {
+    const context = eligibleContext()
+    for (const options of [
+      {}, { key: 'Tab', trusted: true }, { key: 'Enter', trusted: true, shiftKey: true },
+      { key: 'Enter', trusted: true, altKey: true }, { key: 'Enter', trusted: true, ctrlKey: true },
+      { key: 'Enter', trusted: true, metaKey: true }, { key: 'Enter', trusted: true, altGraph: true },
+      { key: 'Enter', trusted: true, isComposing: true }, { key: 'Enter', trusted: true, keyCode: 229 },
+      { key: 'Enter', trusted: true, repeat: true },
+    ]) {
+      expect(isSoftKeyboardEnterLineBreak(new TestKeyboardEvent('keydown', options) as unknown as KeyboardEvent, context)).toBe(false)
+    }
   })
 
-  it('ignores every other key', () => {
-    expect(isSoftKeyboardEnterLineBreak(enterEvent({ key: 'a' }))).toBe(false)
-    expect(isSoftKeyboardEnterLineBreak(enterEvent({ key: 'Escape' }))).toBe(false)
-    expect(isSoftKeyboardEnterLineBreak(enterEvent({ key: 'Tab' }))).toBe(false)
+  it('lets stock key handling see no-session/menu Enter and translates only eligible Enter', () => {
+    vi.stubGlobal('KeyboardEvent', TestKeyboardEvent)
+    let context = eligibleContext()
+    const { editor } = fakeComposerEditor()
+    const keys: KeyboardEvent[] = []
+    const dispose = bindComposerSoftEnter(editor, () => context)
+    editor.addEventListener('keydown', event => { keys.push(event) })
+    const noSession = new TestKeyboardEvent('keydown', { key: 'Enter', trusted: true, cancelable: true })
+    context = { ...context, activeSession: false }
+    editor.dispatchEvent(noSession)
+    expect(noSession.defaultPrevented).toBe(false)
+    expect(keys).toHaveLength(1)
+    expect(keys[0]?.shiftKey).toBe(false)
+    context = { ...context, activeSession: true, commandMenuOpen: true }
+    editor.dispatchEvent(new TestKeyboardEvent('keydown', { key: 'Enter', trusted: true, cancelable: true }))
+    expect(keys).toHaveLength(2)
+    expect(keys[1]?.shiftKey).toBe(false)
+    context = eligibleContext()
+    const softEnter = new TestKeyboardEvent('keydown', { key: 'Enter', trusted: true, cancelable: true })
+    editor.dispatchEvent(softEnter)
+    expect(softEnter.defaultPrevented).toBe(true)
+    expect(keys).toHaveLength(3)
+    expect(keys[2]?.shiftKey).toBe(true)
+    dispose()
+    editor.dispatchEvent(new TestKeyboardEvent('keydown', { key: 'Enter', trusted: true, cancelable: true }))
+    expect(keys).toHaveLength(4)
+    expect(keys[3]?.shiftKey).toBe(false)
   })
 
-  it('ignores an Enter the IME still owns', () => {
-    // An in-flight composition reports 229 while the candidate window owns the
-    // key; treating that as a draft break would fight the IME.
-    expect(isSoftKeyboardEnterLineBreak(enterEvent({ isComposing: true }))).toBe(false)
-    expect(isSoftKeyboardEnterLineBreak(enterEvent({ keyCode: 229 }))).toBe(false)
+  it('keeps composition ownership until ten milliseconds after compositionend', () => {
+    vi.stubGlobal('KeyboardEvent', TestKeyboardEvent)
+    const now = vi.spyOn(performance, 'now').mockReturnValue(100)
+    const { editor, attributes } = fakeComposerEditor()
+    const keys: KeyboardEvent[] = []
+    const dispose = bindComposerSoftEnter(editor, eligibleContext)
+    editor.addEventListener('keydown', event => { keys.push(event) })
+    editor.dispatchEvent(new Event('compositionstart'))
+    editor.dispatchEvent(new TestKeyboardEvent('keydown', { key: 'Enter', trusted: true, cancelable: true }))
+    editor.dispatchEvent(new Event('compositionend'))
+    editor.dispatchEvent(new TestKeyboardEvent('keydown', { key: 'Enter', trusted: true, cancelable: true }))
+    expect(keys).toHaveLength(2)
+    now.mockReturnValue(111)
+    attributes.set('data-composer-composing', '')
+    editor.dispatchEvent(new TestKeyboardEvent('keydown', { key: 'Enter', trusted: true, cancelable: true }))
+    expect(keys).toHaveLength(3)
+    attributes.delete('data-composer-composing')
+    editor.dispatchEvent(new TestKeyboardEvent('keydown', { key: 'Enter', trusted: true, cancelable: true }))
+    expect(keys).toHaveLength(4)
+    expect(keys[3]?.shiftKey).toBe(true)
+    dispose()
   })
 
-  it('re-dispatches the break as Shift+Enter on capture', () => {
+  it('installs only on the live DSH editor and keeps the original toolbar unchanged', () => {
     const source = readFileSync(new URL('../src/native-mobile.ts', import.meta.url), 'utf8')
-    expect(source).toContain("editor.addEventListener('keydown', onKeyDown, true)")
-    expect(source).toContain("editor.removeEventListener('keydown', onKeyDown, true)")
-    expect(source).toContain('shiftKey: true')
-    expect(source).toContain("editor.setAttribute('enterkeyhint', 'enter')")
-  })
-
-  it('unbinds every composer it touched when the surface goes away', () => {
-    const source = readFileSync(new URL('../src/native-mobile.ts', import.meta.url), 'utf8')
-    expect(source).toContain('[data-dsh-mobile-enter-bound="true"]')
-    expect(source).toContain('delete root.dataset.dshMobileEnterBound')
+    expect(source).toContain('[data-composer-input][contenteditable="true"]')
+    expect(source).toContain('window.__DSH_MOBILE_NATIVE__ === undefined ? null : window.__DSH_MOBILE_KEYBOARD_STATE__')
+    expect(source).toContain("editor.getAttribute('aria-haspopup') !== 'menu'")
+    expect(source).toContain('[data-trigger-menu],button[aria-haspopup="listbox"][aria-expanded="true"]')
+    expect(source).toContain("editor.addEventListener('keydown', onKeyDown, { capture: true })")
+    expect(source).not.toContain('lineBreakButton')
   })
 })
