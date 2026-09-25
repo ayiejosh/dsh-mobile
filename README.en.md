@@ -31,7 +31,7 @@
 
 > DSH Mobile is a DeepSeek Harness community plugin; the native app supports Android only.
 >
-> **Current version: 0.4.7**. It adapts the mobile layout to DSH `0.1.7-rc.2` and keeps mobile boot URLs stable when only module order changes, avoiding needless new cache entries. [Release notes](CHANGELOG.md#047---2026-09-25).
+> **Current version: 0.4.7**. It supports DSH `0.1.7-rc.2`, avoids duplicate mobile boot downloads, and improves Android recovery and the phone-width sidebar. [Release notes](CHANGELOG.md#047---2026-09-25).
 >
 > **Upgrade reminder**: update both the plugin and Android app to 0.4.7 when practical. Existing pairings remain intact. The self-signed FRP entry requires at least the 0.4.6 app; older apps can still use existing LAN and trusted-certificate remote connections. [Compatibility notes](#compatibility).
 
@@ -330,6 +330,8 @@ On macOS, local network, self-hosted FRP, and the own reverse proxy work; the th
 | `0.1.4`, `0.2.x` | `0.1.1-rc.2` |
 
 Existing apps (0.3.3 and later) do not need re-pairing. cpolar users should use app 0.3.15 or later because earlier apps may time out before a slow first load over the free route finishes; earlier apps also use a different status-bar strategy. The 0.4.0 app adds the multi-device list, startup behavior, and computer-side revocation status; older apps continue to connect to their saved single device. App 0.1.3 or earlier requires reinstalling and pairing again.
+
+GitHub Release APKs use a stable signing certificate, so an older official APK with the same signer can be upgraded in place while retaining pairings. A locally built Debug APK with a different signer cannot be overwritten by the official APK; plan to pair again when switching between them.
 
 ## Uninstall
 
