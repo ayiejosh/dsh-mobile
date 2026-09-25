@@ -784,10 +784,12 @@ describe('HTTP gateway', () => {
     const anonymous = await request(instance.address().port, '/', { headers: browser })
     expect(anonymous.status).toBe(302)
     expect(anonymous.body).not.toContain('__DSH_TRANSPORT__')
+    expect(anonymous.body).not.toContain('__DSH_FILE_UPLOAD__')
     expect(inner.observations).toHaveLength(0)
     const login = await request(instance.address().port, '/mobile-access/login', { headers: browser })
     expect(login.status).toBe(200)
     expect(login.body).not.toContain('__DSH_TRANSPORT__')
+    expect(login.body).not.toContain('__DSH_FILE_UPLOAD__')
 
     const paired = await pair(instance)
     const headers = { ...browser, cookie: `${SESSION_COOKIE}=${paired.session}` }
@@ -795,10 +797,12 @@ describe('HTTP gateway', () => {
     expect(dedicated.status).toBe(200)
     expect(dedicated.body).toContain('window.__DSH_TRANSPORT__={fetch:')
     expect(dedicated.body).toContain('ownsHost:true')
+    expect(dedicated.body).toContain('window.__DSH_FILE_UPLOAD__={fetch:')
     expect(dedicated.body).toContain('window.__DSH_MOBILE_FRONTEND__="dedicated"')
     const stock = await request(instance.address().port, '/?frontend=stock', { headers })
     expect(stock.status).toBe(200)
     expect(stock.body).not.toContain('__DSH_TRANSPORT__')
+    expect(stock.body).not.toContain('__DSH_FILE_UPLOAD__')
     expect(stock.body).not.toContain('__DSH_MOBILE_FRONTEND__')
   })
 

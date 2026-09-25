@@ -182,7 +182,11 @@ const MOBILE_LAYOUT_DEPENDENCY_PROFILES = Object.freeze([
 ])
 const MOBILE_CSRF_FETCH_BOOTSTRAP = `(()=>{const nativeFetch=window.fetch.bind(window);window.fetch=(input,init)=>{const source=input instanceof Request?input:undefined;const method=String(init?.method??source?.method??'GET').toUpperCase();if(method==='GET'||method==='HEAD')return nativeFetch(input,init);const raw=typeof input==='string'?input:input instanceof URL?input.href:source?.url;if(raw===undefined||new URL(raw,location.href).origin!==location.origin)return nativeFetch(input,init);const headers=new Headers(init?.headers??source?.headers);if(!headers.has(${JSON.stringify(CSRF_HEADER)})){const prefix=${JSON.stringify(`${CSRF_COOKIE}=`)};const token=document.cookie.split(';').map(value=>value.trim()).find(value=>value.startsWith(prefix))?.slice(prefix.length);if(token!==undefined)headers.set(${JSON.stringify(CSRF_HEADER)},token)}return nativeFetch(input,{...init,headers})};})();`
 // Paired pages use the gateway's authenticated HTTP carrier; streams retain DSH's WebSocket transport.
-const MOBILE_AUTHENTICATED_TRANSPORT_BOOTSTRAP = `(()=>{if(window.__DSH_TRANSPORT__!==undefined)throw new Error('DSH Mobile cannot replace an existing transport override');window.__DSH_TRANSPORT__={fetch:(input,init)=>window.fetch(input,init),ownsHost:true}})();`
+// DSH's file-upload client keeps its Worker/XMLHttpRequest carrier unless `__DSH_FILE_UPLOAD__` exists,
+// and that carrier can only reach `location.origin` — not the harness, on a page the app owns — while
+// also bypassing the CSRF wrapper above. Declare the hook so uploads ride the same carrier as every
+// other request. `window.fetch` is resolved at call time on purpose: the wrapper is installed after it.
+const MOBILE_AUTHENTICATED_TRANSPORT_BOOTSTRAP = `(()=>{if(window.__DSH_TRANSPORT__!==undefined)throw new Error('DSH Mobile cannot replace an existing transport override');window.__DSH_TRANSPORT__={fetch:(input,init)=>window.fetch(input,init),ownsHost:true},window.__DSH_FILE_UPLOAD__={fetch:(input,init)=>window.fetch(input,init)}})();`
 /** Use this page's gateway health, rather than OS internet validation, for DSH reconnects. */
 const MOBILE_GATEWAY_REACHABILITY_BOOTSTRAP = `(()=>{
   const view=globalThis;
