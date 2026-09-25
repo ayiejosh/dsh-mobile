@@ -107,9 +107,18 @@ for (const declaration of [
   "'rightbar': { kind: 'single', scope: 'root' }",
   "'shell.overlay': { kind: 'list', scope: 'root' }",
   "ctx.reflect.provide('layout'",
-  "ctx.slots.provideRoot({ hooks: { panelInfo } })",
 ]) {
   if (!layoutSource.includes(declaration)) throw new Error(`DSH layout contract changed: missing ${declaration}`)
+}
+// Up to 0.1.7-rc.1 the hook was declared with a shorthand property. 0.1.7-rc.2
+// builds the panel observable once, passes it into LayoutController (so it
+// also rides on the layout service as ctx.layout.panelInfo — the channel rc.2
+// client plugins read directly), and feeds that same member to provideRoot
+// explicitly. Both spellings keep the dual-channel contract this check pins.
+const panelInfoHook = layoutSource.includes('ctx.slots.provideRoot({ hooks: { panelInfo } })')
+  || layoutSource.includes('ctx.slots.provideRoot({ hooks: { panelInfo: layout.panelInfo } })')
+if (!panelInfoHook) {
+  throw new Error('DSH layout contract changed: missing ctx.slots.provideRoot({ hooks: { panelInfo } })')
 }
 
 const conversationSources = await Promise.all((await sourceFilesUnder('packages/client/ui-conversation/src/client/skeleton'))
