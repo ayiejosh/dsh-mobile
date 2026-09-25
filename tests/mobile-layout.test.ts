@@ -995,6 +995,13 @@ describe('composer soft-keyboard policy', () => {
     expect(resolveComposerImePolicy(closestStub(true), true)).toBe('withhold')
   })
 
+  it('matches only a listbox trigger inside the composer card', () => {
+    let queried = ''
+    const target = { closest: (selector: string) => { queried = selector; return null } } as unknown as Element
+    expect(resolveComposerImePolicy(target, true)).toBe('restore')
+    expect(queried).toBe('[data-composer-card] button[aria-haspopup="listbox"]')
+  })
+
   it('restores the IME for every other tap on a touch-primary device', () => {
     // The composer itself is the important case: reaching for the draft has to
     // bring the keyboard back, or the withheld attribute would strand it.

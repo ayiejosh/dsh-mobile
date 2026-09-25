@@ -150,7 +150,7 @@ const COMPOSER_CARD_SELECTOR = '[data-composer-card]'
 const COMPOSER_EDITOR_SELECTOR = `${COMPOSER_CARD_SELECTOR} [contenteditable="true"],${COMPOSER_CARD_SELECTOR} [contenteditable="plaintext-only"]`
 
 /** The composer's Add trigger, whose menu must open without summoning the IME. */
-const COMPOSER_COMMAND_TRIGGER_SELECTOR = 'button[aria-haspopup="listbox"]'
+const COMPOSER_COMMAND_TRIGGER_SELECTOR = `${COMPOSER_CARD_SELECTOR} button[aria-haspopup="listbox"]`
 
 /**
  * Whether a focus target belongs to the composer, which owns its own keyboard
