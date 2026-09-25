@@ -730,6 +730,7 @@ describe('dedicated mobile layout boot', () => {
       let rootComponent: ((props: Record<string, never>) => unknown) | undefined
       let contribution: { hooks: { panelInfo: { getSnapshot: () => { activePanelId: string | null }, subscribe: (listener: () => void) => () => void } } } | undefined
       let layout: {
+        panelInfo: { getSnapshot: () => { activePanelId: string | null }, subscribe: (listener: () => void) => () => void }
         selectPanel: (id: string | null) => void
         retainMainPanels: (ids: readonly string[]) => void
         openRightbar: (track?: boolean, fullscreen?: boolean) => void
@@ -791,6 +792,24 @@ describe('dedicated mobile layout boot', () => {
       mainEntries.splice(0)
       notifyMainEntries()
       expect(seen).toEqual([{ activePanelId: 'alpha' }, { activePanelId: 'beta' }, { activePanelId: null }])
+
+      // DSH 0.1.7-rc.2 client plugins read the same store off the layout
+      // service member (ctx.layout.panelInfo), the way the official
+      // LayoutController exposes it. Without the member plugin-manager fails
+      // activation on the dedicated frontend and open-in-app's shortcut
+      // target throws at invocation time.
+      const servicePanelInfo = layout?.panelInfo
+      expect(servicePanelInfo).toBeDefined()
+      expect(servicePanelInfo?.getSnapshot()).toEqual({ activePanelId: null })
+      const serviceSeen: Array<{ activePanelId: string | null }> = []
+      const disposeServicePanelListener = servicePanelInfo?.subscribe(() => {
+        serviceSeen.push(servicePanelInfo.getSnapshot())
+      })
+      mainEntries.splice(0, mainEntries.length, { options: { key: 'gamma' } })
+      layout?.selectPanel('gamma')
+      expect(serviceSeen).toEqual([{ activePanelId: 'gamma' }])
+      expect(typeof disposeServicePanelListener).toBe('function')
+      disposeServicePanelListener?.()
 
       // The right panel (dsh-better-sidebar and friends) drives the drawer
       // through these two; without them syncPresentation throws.
