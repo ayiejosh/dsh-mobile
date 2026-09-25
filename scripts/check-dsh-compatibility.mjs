@@ -110,8 +110,10 @@ for (const declaration of [
 ]) {
   if (!layoutSource.includes(declaration)) throw new Error(`DSH layout contract changed: missing ${declaration}`)
 }
-if (!layoutSource.includes('ctx.slots.provideRoot({ hooks: { panelInfo } })')
-  && !layoutSource.includes('ctx.slots.provideRoot({ hooks: { panelInfo: layout.panelInfo } })')) {
+// DSH rc.2 passes the layout service member; older releases use the shorthand.
+const panelInfoHook = layoutSource.includes('ctx.slots.provideRoot({ hooks: { panelInfo } })')
+  || layoutSource.includes('ctx.slots.provideRoot({ hooks: { panelInfo: layout.panelInfo } })')
+if (!panelInfoHook) {
   throw new Error('DSH layout contract changed: missing panelInfo root hook')
 }
 
