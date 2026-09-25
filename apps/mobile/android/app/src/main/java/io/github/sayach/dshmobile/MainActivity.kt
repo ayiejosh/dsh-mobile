@@ -17,6 +17,7 @@ import android.os.Build
 import android.os.Bundle
 import android.os.Handler
 import android.os.Looper
+import android.os.SystemClock
 import android.provider.Settings
 import android.text.TextUtils
 import android.text.InputType
@@ -151,6 +152,7 @@ class MainActivity : Activity() {
     private var deviceListStatus: TextView? = null
     private var deviceUndoPopup: PopupWindow? = null
     private var deviceListVisible = false
+    private var rendererCrashTimes: List<Long> = emptyList()
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -1738,9 +1740,16 @@ class MainActivity : Activity() {
                 return
             }
             val generation = beginRestoreAttempt()
-            restoreTrustedDevice(paired.origin, paired.credential(), paired.mode, generation, deviceKey = paired.key) { disposition ->
+            restoreTrustedDevice(
+                paired.origin,
+                paired.credential(),
+                paired.mode,
+                generation,
+                deviceKey = paired.key,
+                preserveWebView = webView,
+            ) { disposition ->
                 if (disposition == RestoreFailureDisposition.RETRY_TRANSIENT) {
-                    if (!scheduleAutomaticRecovery() && !isFinishing && !isDestroyed) showDeviceList()
+                    if (!scheduleAutomaticRecovery() && webView == null && !isFinishing && !isDestroyed) showDeviceList()
                 } else {
                     cancelAutomaticRecovery()
                     if (!isFinishing && !isDestroyed) showDeviceList()
@@ -1758,9 +1767,9 @@ class MainActivity : Activity() {
             ?: GatewayOrigin.parse(preferences.getString(originPreference(mode), "").orEmpty())
             ?: return
         val generation = beginRestoreAttempt()
-        restoreTrustedDevice(preferred, credential, mode, generation) { disposition ->
+        restoreTrustedDevice(preferred, credential, mode, generation, preserveWebView = webView) { disposition ->
             if (disposition == RestoreFailureDisposition.RETRY_TRANSIENT) {
-                if (!scheduleAutomaticRecovery() && !isFinishing && !isDestroyed) showConnectionCenter()
+                if (!scheduleAutomaticRecovery() && webView == null && !isFinishing && !isDestroyed) showConnectionCenter()
             } else {
                 cancelAutomaticRecovery()
             }
@@ -1821,6 +1830,7 @@ class MainActivity : Activity() {
         mode: AccessMode = accessMode,
         generation: Int = beginRestoreAttempt(),
         deviceKey: String? = null,
+        preserveWebView: WebView? = null,
         claimSuccess: () -> Boolean = { true },
         onFailure: (RestoreFailureDisposition) -> Unit,
     ) {
@@ -1896,13 +1906,21 @@ class MainActivity : Activity() {
                         savePairedDevice(mode, selectedOrigin, renewed, credential)
                         warnIfTailscale(selectedOrigin)
                         cancelAutomaticRecovery()
-                        failureDialog?.dismiss()
                         installNativeSession(
                             origin = selectedOrigin,
                             session = renewed,
                             isCurrent = { generation == restoreGeneration },
                         ) {
-                            showBrowser(selectedOrigin, credential.caCertificate)
+                            if (preserveWebView == null) {
+                                failureDialog?.dismiss()
+                                showBrowser(selectedOrigin, credential.caCertificate)
+                            }
+                            else preserveLiveDocumentOrReload(
+                                preserveWebView,
+                                selectedOrigin,
+                                credential.caCertificate,
+                                generation,
+                            )
                         }
                     }
                 }
@@ -1911,6 +1929,73 @@ class MainActivity : Activity() {
             // Activity teardown owns executor shutdown; no UI result is needed afterwards.
             if (generation == restoreGeneration) onFailure(RestoreFailureDisposition.RETRY_TRANSIENT)
         }
+    }
+
+    /** Keep the existing page after cookie renewal only if its DSH JavaScript document survived. */
+    private fun preserveLiveDocumentOrReload(
+        candidate: WebView,
+        origin: GatewayOrigin,
+        caCertificate: ByteArray?,
+        generation: Int,
+    ) {
+        val fallbackUrl = candidate.url?.takeIf { isDshDocumentUrl(origin, it) } ?: origin.serialized
+        val action = { result: String? ->
+            if (isFinishing || isDestroyed) RenewedDocumentAction.IGNORE
+            else renewedDocumentAction(
+                generation,
+                restoreGeneration,
+                webView === candidate,
+                gatewayOrigin == origin,
+                result,
+            )
+        }
+        val reload = {
+            if (action(null) == RenewedDocumentAction.RELOAD) {
+                failureDialog?.dismiss()
+                showBrowser(origin, caCertificate, fallbackUrl)
+            }
+        }
+        if (action(null) == RenewedDocumentAction.IGNORE) return
+        if (gatewayOrigin != origin) {
+            reload()
+            return
+        }
+        val completed = AtomicBoolean(false)
+        val timeout = Runnable { if (completed.compareAndSet(false, true)) reload() }
+        restoreUiHandler.postDelayed(timeout, LIVE_DOCUMENT_PROBE_TIMEOUT_MS)
+        runCatching {
+            candidate.evaluateJavascript("window.__DSH_MOBILE_LIVE_DOCUMENT__ === true") { result ->
+                if (!completed.compareAndSet(false, true)) return@evaluateJavascript
+                restoreUiHandler.removeCallbacks(timeout)
+                when (action(result)) {
+                    RenewedDocumentAction.IGNORE -> Unit
+                    RenewedDocumentAction.KEEP -> failureDialog?.dismiss()
+                    RenewedDocumentAction.RELOAD -> reload()
+                }
+            }
+        }.onFailure {
+            if (completed.compareAndSet(false, true)) {
+                restoreUiHandler.removeCallbacks(timeout)
+                reload()
+            }
+        }
+    }
+
+    private fun handleRendererGone(browser: WebView) {
+        if (webView !== browser || isFinishing || isDestroyed) return
+        val decision = rendererRecoveryDecision(rendererCrashTimes, SystemClock.elapsedRealtime())
+        rendererCrashTimes = decision.recentCrashes
+        destroyWebView(rendererGone = true)
+        if (!decision.retry) {
+            showDeviceList()
+            deviceListStatus?.apply {
+                setText(R.string.webview_renderer_failed)
+                setTextColor(getColor(R.color.app_error))
+            }
+            return
+        }
+        showRestoringTrust(activeDeviceKey)
+        if (!scheduleAutomaticRecovery()) showDeviceList()
     }
 
     @SuppressLint("SetJavaScriptEnabled")
@@ -1978,12 +2063,14 @@ class MainActivity : Activity() {
             openExternal = ::openExternal,
             onBlocked = { toastError(R.string.blocked_navigation) },
             onFailure = ::showLoadFailure,
+            onRendererGone = { handleRendererGone(browser) },
             onTopLevelUrlChanged = { nativeBridge?.onTopLevelNavigation(it) },
             onLoaded = {
                 if (webView === browser && gatewayOrigin == origin) {
                     retryUrl = origin.serialized
                     CookieManager.getInstance().flush()
                     nativeBridge?.injectPage()
+                    browser.evaluateJavascript("window.__DSH_MOBILE_LIVE_DOCUMENT__ = true", null)
                 }
             },
         )
@@ -2288,17 +2375,19 @@ class MainActivity : Activity() {
             }
     }
 
-    private fun destroyWebView(changingConfigurations: Boolean = false) {
+    private fun destroyWebView(changingConfigurations: Boolean = false, rendererGone: Boolean = false) {
         secureWebViewClient?.dispose()
         secureWebViewClient = null
         nativeBridge?.dispose(changingConfigurations)
         nativeBridge = null
         webView?.apply {
-            stopLoading()
-            webChromeClient = null
-            webViewClient = android.webkit.WebViewClient()
+            if (!rendererGone) {
+                stopLoading()
+                webChromeClient = null
+                webViewClient = android.webkit.WebViewClient()
+            }
             (parent as? ViewGroup)?.removeView(this)
-            removeAllViews()
+            if (!rendererGone) removeAllViews()
             destroy()
         }
         webView = null
@@ -2450,6 +2539,7 @@ class MainActivity : Activity() {
         const val SCAN_QR_REQUEST = 4106
         const val DEVICE_STATUS_REFRESH_MS = 20_000L
         const val DEVICE_UNDO_TIMEOUT_MS = 6_000L
+        const val LIVE_DOCUMENT_PROBE_TIMEOUT_MS = 2_000L
         const val RESTORE_ESCAPE_DELAY_MS = 12_000L
         const val APP_RELEASES_URL = "https://github.com/saya-ch/dsh-mobile/releases/latest"
         val RECOVERY_DELAYS_MS = longArrayOf(0L, 1_000L, 3_000L, 8_000L)

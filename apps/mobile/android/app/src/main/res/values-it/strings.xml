@@ -74,6 +74,7 @@
     <string name="secure_connection_failed">Connessione sicura non riuscita</string>
     <string name="secure_connection_failed_message">Il certificato non corrisponde all\'identità del computer salvata. Verifica che sia il computer corretto. Se è stato reinstallato o il certificato è stato reimpostato, cancella i dati del sito e ripeti l\'abbinamento.</string>
     <string name="page_load_failed">Impossibile caricare DSH</string>
+    <string name="webview_renderer_failed">La pagina DSH si è arrestata più volte. Aggiorna Android System WebView, poi riconnetti questo computer.</string>
     <string name="page_load_failed_message">DSH potrebbe non essere in esecuzione oppure un firewall o la rete corrente potrebbero bloccare la connessione. Prova l\'indirizzo del computer nel browser del telefono; se non è raggiungibile, usa l\'hotspot del telefono.</string>
     <string name="blocked_navigation">Navigazione bloccata\nLa destinazione non usa HTTPS oppure non è stata aperta da te. Apri solo link HTTPS attendibili.</string>
     <string name="no_browser">Impossibile aprire il link\nNon è disponibile alcun browser di sistema. Installa o abilita un browser e riprova.</string>
