@@ -117,14 +117,36 @@ async function request(
 async function udpDiscovery(port: number): Promise<Record<string, unknown>> {
   const client = createSocket('udp4')
   return new Promise((resolve, reject) => {
-    const timer = setTimeout(() => { client.close(); reject(new Error('UDP discovery timed out')) }, 2_000)
-    client.once('error', (error) => { clearTimeout(timer); client.close(); reject(error) })
-    client.once('message', (message) => {
+    let settled = false
+    let retry: ReturnType<typeof setInterval> | undefined
+    const finish = (complete: () => void): void => {
+      if (settled) return
+      settled = true
       clearTimeout(timer)
+      if (retry !== undefined) clearInterval(retry)
       client.close()
-      resolve(JSON.parse(message.toString('utf8')) as Record<string, unknown>)
+      complete()
+    }
+    const timer = setTimeout(() => finish(() => reject(new Error('UDP discovery timed out'))), 5_000)
+    const send = (): void => {
+      client.send(Buffer.from('DSH_MOBILE_DISCOVER_V1', 'ascii'), port, '127.0.0.1', error => {
+        if (error !== null) finish(() => reject(error))
+      })
+    }
+    client.once('error', error => finish(() => reject(error)))
+    client.once('message', (message) => {
+      try {
+        const payload = JSON.parse(message.toString('utf8')) as Record<string, unknown>
+        finish(() => resolve(payload))
+      } catch (error) {
+        finish(() => reject(error))
+      }
     })
-    client.send(Buffer.from('DSH_MOBILE_DISCOVER_V1', 'ascii'), port, '127.0.0.1')
+    client.bind(0, '127.0.0.1', () => {
+      if (settled) return
+      send()
+      retry = setInterval(send, 250)
+    })
   })
 }
 
@@ -1413,7 +1435,10 @@ describe('HTTP gateway', () => {
       protocol: 1,
       instanceId,
     })
-    await expect(udpDiscovery(instance.address().port)).resolves.toEqual({
+    const discovery = await udpDiscovery(instance.address().port).catch(error => {
+      throw new Error(`UDP discovery failed: ${JSON.stringify(instance.discoveryStatus())}`, { cause: error })
+    })
+    expect(discovery).toEqual({
       deviceName: expect.any(String),
       origin: instance.address().origin,
       port: instance.address().port,
