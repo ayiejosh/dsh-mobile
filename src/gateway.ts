@@ -161,6 +161,10 @@ const SIDEBAR_MODULE = '@deepseek-ai/dsh-client-ui-sidebar'
 const SETTINGS_MODULE = '@deepseek-ai/dsh-client-ui-settings'
 const API_GATEWAY_MODULE = '@deepseek-ai/dsh-api-gateway'
 const API_REMOTES_MODULE = '@deepseek-ai/dsh-api-remotes'
+const MOBILE_BOOT_CORE_MODULES = new Set([
+  MOBILE_CLIENT_MODULE, MOBILE_LAYOUT_MODULE, CONNECTION_MODULE, RUNTIME_MODULE,
+  RENDERER_MODULE, SIDEBAR_MODULE, SETTINGS_MODULE, API_GATEWAY_MODULE, API_REMOTES_MODULE,
+])
 const MOBILE_LAYOUT_DEPENDENCY_PROFILES = Object.freeze([
   Object.freeze({
     slots: RUNTIME_MODULE,
@@ -253,6 +257,7 @@ interface BootGraphEntry {
   url: string
   rev: string
   inject?: string[]
+  external?: string[]
   immediately?: boolean
 }
 
@@ -292,6 +297,8 @@ interface MobileBootPlanRef {
   readonly replaceEnd: number
   readonly layoutBatch?: BootGraphBatch
   readonly planEntries?: readonly MobileBootBatchEntry[]
+  readonly originalApplicationBatches?: readonly BootGraphBatch[]
+  readonly rewrittenBatchEntries?: readonly { readonly batch: BootGraphBatch; readonly entries: readonly MobileBootBatchEntry[] }[]
 }
 
 interface SplitMobileBootBatch {
@@ -373,13 +380,63 @@ function revisionedMobileBatchPath(entries: readonly MobileBootBatchEntry[]): { 
   return { key, path: `${MOBILE_BOOT_BATCH_PREFIX}${key}.js` }
 }
 
+class ExcludedClientModulesError extends Error {
+  constructor(message: string) { super(`excludedClientModules: ${message}`) }
+}
+
+/** Validate graph edges before removing application rows from both manifest views. */
+function excludeMobileBootEntries(
+  entries: BootGraphEntry[],
+  batches: BootGraphBatch[],
+  excludedIds: readonly string[],
+): void {
+  if (excludedIds.length === 0) return
+  const excluded = new Set(excludedIds)
+  if (excluded.size !== excludedIds.length) throw new ExcludedClientModulesError('duplicate module ids')
+  const byId = new Map(entries.map(entry => [entry.id, entry]))
+  const phases = new Map<string, BootGraphBatch['phase']>()
+  for (const batch of batches) {
+    for (const id of batch.entries) {
+      if (phases.has(id)) throw new ExcludedClientModulesError(`upstream module ${id} belongs to multiple batches`)
+      phases.set(id, batch.phase)
+    }
+  }
+  for (const entry of entries) {
+    if (!phases.has(entry.id)) throw new ExcludedClientModulesError(`upstream module ${entry.id} belongs to no batch`)
+  }
+  for (const id of excluded) {
+    const entry = byId.get(id)
+    if (entry === undefined) throw new ExcludedClientModulesError(`module ${id} is not installed in this DSH client graph`)
+    if (MOBILE_BOOT_CORE_MODULES.has(id) || entry.immediately === true || phases.get(id) !== 'application') {
+      throw new ExcludedClientModulesError(`module ${id} is required for mobile boot or belongs to a bootstrap batch`)
+    }
+  }
+  for (const entry of entries) {
+    if (excluded.has(entry.id)) continue
+    for (const [field, edges] of [['inject', entry.inject], ['external', entry.external]] as const) {
+      if (edges !== undefined && (!Array.isArray(edges) || edges.some(id => typeof id !== 'string'))) {
+        throw new ExcludedClientModulesError(`upstream module ${entry.id} has malformed ${field} dependencies`)
+      }
+      for (const dependency of edges ?? []) {
+        const packageId = dependency.endsWith('/client') ? dependency.slice(0, -'/client'.length) : dependency
+        if (excluded.has(packageId)) {
+          throw new ExcludedClientModulesError(`module ${entry.id} still depends on excluded module ${packageId}; exclude the dependent too or keep ${packageId}`)
+        }
+      }
+    }
+  }
+  entries.splice(0, entries.length, ...entries.filter(entry => !excluded.has(entry.id)))
+  for (const batch of batches) batch.entries = batch.entries.filter(id => !excluded.has(id))
+  batches.splice(0, batches.length, ...batches.filter(batch => batch.entries.length > 0))
+}
+
 /**
  * Parse one upstream boot manifest and rewire the layout entry onto the
- * gateway-owned layout module. The layout entry's URL and revision become the
- * local `mobile-layout.js` path; the dedicated frontend is authenticated in the
- * gateway, so the requested layout needs no upstream address.
+ * gateway-owned layout module. Optional exclusions remove application entries
+ * and identify every affected batch for reassembly. The dedicated frontend is
+ * authenticated in the gateway, so the layout needs no upstream address.
  */
-export function parseMobileBootPlan(html: string): MobileBootPlanRef {
+export function parseMobileBootPlan(html: string, excludedClientModules: readonly string[] = []): MobileBootPlanRef {
   const assignment = /(?:window\.__DSH_BOOT__|globalThis\["__DSH_BOOT__"\])\s*=\s*/u.exec(html)
   if (assignment?.index === undefined) throw new Error('upstream DSH index has no boot manifest')
   const replaceStart = assignment.index
@@ -407,6 +464,9 @@ export function parseMobileBootPlan(html: string): MobileBootPlanRef {
   layout[0].rev = `dsh-mobile-layout-${DSH_MOBILE_VERSION}`
   const parsedBatches = parsed.batches
   if (parsedBatches === undefined) {
+    if (excludedClientModules.length > 0) {
+      throw new ExcludedClientModulesError('this DSH version has no batched boot manifest; disable exclusions or update DSH')
+    }
     return Object.freeze({
       parsed: parsed as { rev: string; entries: BootGraphEntry[] },
       entries,
@@ -435,7 +495,11 @@ export function parseMobileBootPlan(html: string): MobileBootPlanRef {
     throw new Error('upstream DSH boot manifest has no unique application layout batch')
   }
   const layoutBatch = layoutBatches[0]
-  // Canonical entry order. Upstream lists one application batch's entries in
+  const originalApplicationBatches = batches
+    .filter(batch => batch.phase === 'application')
+    .map(batch => ({ ...batch, entries: [...batch.entries] }))
+  excludeMobileBootEntries(entries, batches, excludedClientModules)
+  // Canonical entry order. Upstream lists application batch entries in
   // module-registration order, which is not stable across restarts of an
   // unchanged configuration. `splitMobileBootBatch` derives the batch key, the
   // merged chunk boundaries, and the concatenation order of the assembled body
@@ -444,14 +508,24 @@ export function parseMobileBootPlan(html: string): MobileBootPlanRef {
   // validator. Every paired device then re-downloads the whole boot payload
   // even though no module changed. Entry ids are unique (the map above rejects
   // duplicates), so sorting them is a total order.
-  const orderedEntryIds = [...layoutBatch.entries].sort((left, right) => (left < right ? -1 : left > right ? 1 : 0))
-  const planEntries = orderedEntryIds.map((id): MobileBootBatchEntry => {
-    const entry = entryById.get(id)
-    if (entry === undefined || typeof entry.url !== 'string' || typeof entry.rev !== 'string') {
-      throw new Error('upstream DSH boot manifest batches are malformed')
-    }
-    return Object.freeze({ id, url: entry.url, rev: entry.rev })
-  })
+  const affectedBatchUrls = new Set(originalApplicationBatches
+    .filter(batch => batch.entries.some(id => excludedClientModules.includes(id)))
+    .map(batch => batch.url))
+  const rewrittenBatchEntries = batches
+    .filter(batch => batch === layoutBatch || (batch.phase === 'application' && affectedBatchUrls.has(batch.url)))
+    .map(batch => ({
+      batch,
+      entries: [...batch.entries].sort((left, right) => (left < right ? -1 : left > right ? 1 : 0))
+        .map((id): MobileBootBatchEntry => {
+          const entry = entryById.get(id)
+          if (entry === undefined || typeof entry.url !== 'string' || typeof entry.rev !== 'string') {
+            throw new Error('upstream DSH boot manifest batches are malformed')
+          }
+          return Object.freeze({ id, url: entry.url, rev: entry.rev })
+        }),
+    }))
+  const planEntries = rewrittenBatchEntries.find(candidate => candidate.batch === layoutBatch)?.entries
+  if (planEntries === undefined) throw new Error('upstream DSH boot manifest lost the application layout batch')
   return Object.freeze({
     parsed: parsed as { rev: string; entries: BootGraphEntry[]; batches: BootGraphBatch[] },
     entries,
@@ -462,6 +536,8 @@ export function parseMobileBootPlan(html: string): MobileBootPlanRef {
     replaceEnd: scriptEnd,
     layoutBatch,
     planEntries,
+    originalApplicationBatches,
+    rewrittenBatchEntries,
   })
 }
 
@@ -509,36 +585,76 @@ export function splitMobileBootBatch(
   return { plans, rows }
 }
 
+function escapeMobilePreloadAttribute(value: string): string {
+  return value.replaceAll('&', '&amp;').replaceAll('"', '&quot;').replaceAll('<', '&lt;').replaceAll('>', '&gt;')
+}
+
+function mobileApplicationPreload(url: string): string {
+  return `<link rel="preload" as="script" href="${escapeMobilePreloadAttribute(url)}">`
+}
+
+function preloadAttribute(tag: string, name: string): string | undefined {
+  const match = new RegExp(`(?:^|\\s)${name}\\s*=\\s*(?:"([^"]*)"|'([^']*)')`, 'iu').exec(tag)
+  return match?.[1] ?? match?.[2]
+}
+
+/** Replace only DSH's application-script preloads; bootstrap and unrelated links are untouched. */
+function rewriteMobileApplicationPreloads(html: string, replacements: ReadonlyMap<string, string>): string {
+  if (replacements.size === 0) return html
+  const escaped = new Map([...replacements].map(([url, markup]) => [escapeMobilePreloadAttribute(url), markup]))
+  return html.replace(/<link\b[^>]*>/giu, (tag) => {
+    const rel = preloadAttribute(tag, 'rel')
+    if (!rel?.split(/\s+/u).includes('preload') || preloadAttribute(tag, 'as') !== 'script') return tag
+    return escaped.get(preloadAttribute(tag, 'href') ?? '') ?? tag
+  })
+}
+
 function rewriteMobileIndexWithBatch(
   html: string,
-  options: { readonly sizes?: ReadonlyMap<string, number>; readonly passThrough?: ReadonlySet<string> } = {},
+  options: { readonly sizes?: ReadonlyMap<string, number>; readonly passThrough?: ReadonlySet<string>; readonly excludedClientModules?: readonly string[] } = {},
 ): RewrittenMobileIndex {
-  const plan = parseMobileBootPlan(html)
+  const plan = parseMobileBootPlan(html, options.excludedClientModules)
   const remoteSettings = orderAuthenticatedSettings(plan.entries, plan.slotProvider)
   let batches: readonly MobileBootBatchPlan[] = []
-  if (plan.batches !== undefined && plan.layoutBatch !== undefined && plan.planEntries !== undefined) {
-    const split = splitMobileBootBatch(
-      plan.planEntries,
-      options.sizes ?? new Map(),
-      options.passThrough ?? new Set(),
-    )
-    const at = plan.batches.indexOf(plan.layoutBatch)
-    if (at < 0) throw new Error('upstream DSH boot manifest has no unique application layout batch')
-    plan.batches.splice(at, 1, ...split.rows)
-    batches = Object.freeze(split.plans)
+  let preloadReplacements = new Map<string, string>()
+  if (plan.batches !== undefined && plan.rewrittenBatchEntries !== undefined) {
+    const rewrites = plan.rewrittenBatchEntries.map(({ batch, entries }) => ({
+      batch,
+      split: splitMobileBootBatch(entries, options.sizes ?? new Map(), options.passThrough ?? new Set()),
+    }))
+    if (rewrites.reduce((count, item) => count + item.split.plans.length, 0) > MAX_MOBILE_BOOT_BATCHES) {
+      throw new Error(`upstream DSH mobile boot requires more than ${String(MAX_MOBILE_BOOT_BATCHES)} merged batches`)
+    }
+    for (const { batch, split } of rewrites) {
+      const at = plan.batches.indexOf(batch)
+      if (at < 0) throw new Error('upstream DSH boot manifest lost an application batch')
+      plan.batches.splice(at, 1, ...split.rows)
+      batches = [...batches, ...split.plans]
+    }
+    for (const original of plan.originalApplicationBatches ?? []) {
+      const replacement = rewrites.find(item => item.batch.url === original.url)
+      preloadReplacements.set(
+        original.url,
+        replacement === undefined
+          ? plan.batches.some(batch => batch.url === original.url) ? mobileApplicationPreload(original.url) : ''
+          : replacement.split.rows.map(row => mobileApplicationPreload(row.url)).join(''),
+      )
+    }
+    batches = Object.freeze(batches)
     plan.parsed.rev = createHash('sha256').update(JSON.stringify({ entries: plan.entries, batches: plan.batches })).digest('hex').slice(0, 16)
   }
   const transportBootstrap = remoteSettings ? MOBILE_AUTHENTICATED_TRANSPORT_BOOTSTRAP : ''
   const replacement = `${MOBILE_GATEWAY_REACHABILITY_BOOTSTRAP}${transportBootstrap}${MOBILE_CSRF_FETCH_BOOTSTRAP}window.__DSH_MOBILE_FRONTEND__="dedicated";${plan.assignment}${JSON.stringify(plan.parsed)};`
+  const rewritten = `${html.slice(0, plan.replaceStart)}${replacement}${html.slice(plan.replaceEnd)}`
   return Object.freeze({
-    html: ensureMobileViewport(ensureMobileCompatibility(`${html.slice(0, plan.replaceStart)}${replacement}${html.slice(plan.replaceEnd)}`)),
+    html: ensureMobileViewport(ensureMobileCompatibility(rewriteMobileApplicationPreloads(rewritten, preloadReplacements))),
     batches,
   })
 }
 
-/** Replace only DSH's layout client module while retaining its complete plugin graph. */
-export function rewriteMobileIndex(html: string): string {
-  return rewriteMobileIndexWithBatch(html).html
+/** Rewrite the dedicated mobile graph; exclusions are opt-in and leave stock DSH unchanged. */
+export function rewriteMobileIndex(html: string, excludedClientModules: readonly string[] = []): string {
+  return rewriteMobileIndexWithBatch(html, { excludedClientModules }).html
 }
 
 class ByteLimitTransform extends Transform {
@@ -1008,6 +1124,7 @@ export class MobileAccessGateway {
   private mdnsError: { readonly code: string; readonly message: string } | undefined
   /** Names of the bundled mobile assets that could not be read, if any. */
   private mobileAssetError: string | undefined
+  private lastModuleExclusionError: string | undefined
   private bonjour: Bonjour | undefined
   private pairingCaCertificate: string | undefined
   private listenerPort: number | undefined
@@ -2061,14 +2178,23 @@ export class MobileAccessGateway {
       let body: Buffer
       try {
         const html = Buffer.concat(chunks).toString('utf8')
-        const plan = parseMobileBootPlan(html)
-        const options = plan.planEntries === undefined
-          ? {}
-          : await this.resolveMobileBootSizes(plan.planEntries)
+        const plan = parseMobileBootPlan(html, this.config.excludedClientModules)
+        const options = plan.rewrittenBatchEntries === undefined
+          ? { excludedClientModules: this.config.excludedClientModules }
+          : { ...await this.resolveMobileBootSizes(plan.rewrittenBatchEntries.flatMap(batch => batch.entries)), excludedClientModules: this.config.excludedClientModules }
         const rewritten = rewriteMobileIndexWithBatch(html, options)
         for (const batch of rewritten.batches) this.rememberMobileBootBatch(batch)
         body = Buffer.from(rewritten.html)
-      } catch {
+      } catch (error) {
+        if (error instanceof ExcludedClientModulesError) {
+          const detail = error.message.replace(/[\r\n]/gu, ' ').slice(0, 512)
+          if (detail !== this.lastModuleExclusionError) {
+            this.lastModuleExclusionError = detail
+            process.emitWarning(detail, { code: 'DSH_MOBILE_MODULE_EXCLUSION_INVALID' })
+          }
+          sendJson(response, 409, { error: 'excluded_client_modules_invalid', detail }, this.tlsEnabled)
+          return
+        }
         throw new HttpError(502, 'upstream_unavailable')
       }
       const headers = sanitizeResponseHeaders(proxied.headers, this.config.upstreamOrigin)

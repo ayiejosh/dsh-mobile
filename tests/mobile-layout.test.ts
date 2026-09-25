@@ -67,6 +67,7 @@ interface BootEntry {
   url: string
   rev: string
   inject?: string[]
+  external?: string[]
   immediately?: boolean
 }
 
@@ -915,6 +916,121 @@ function batchedIndex(ids: string[]): string {
   }
   return `<!doctype html><html><head><script>globalThis["__DSH_BOOT__"] = ${JSON.stringify(graph)};</script></head><body></body></html>`
 }
+
+function exclusionIndex(extra: BootEntry[] = [], separate: string[] = []): string {
+  const base: BootEntry[] = [
+    { id: 'bootstrap', url: '/plugins/bootstrap.js', rev: 'bootstrap' },
+    { id: '@deepseek-ai/dsh-client-runtime', url: '/plugins/runtime.js', rev: 'runtime' },
+    { id: '@deepseek-ai/dsh-client-ui-theme', url: '/plugins/theme.js', rev: 'theme' },
+    { id: connectionModule, url: '/plugins/connection.js', rev: 'connection' },
+    { id: layoutId, url: '/plugins/layout.js', rev: 'layout', inject: ['@deepseek-ai/dsh-client-runtime', '@deepseek-ai/dsh-client-ui-theme'] },
+    { id: 'dsh-mobile', url: '/plugins/dsh-mobile.js', rev: 'mobile', inject: [connectionModule, '@deepseek-ai/dsh-client-ui-sidebar'] },
+  ]
+  const entries = [...base, ...extra]
+  const graph = {
+    rev: 'stock',
+    entries,
+    batches: [
+      { phase: 'bootstrap', url: '/plugins/bootstrap-batch.js', rev: 'bootstrap-batch', entries: ['bootstrap'] },
+      { phase: 'application', url: '/plugins/application.js', rev: 'app-batch', entries: entries.map(entry => entry.id).filter(id => id !== 'bootstrap' && !separate.includes(id)) },
+      ...(separate.length > 0 ? [{ phase: 'application', url: '/plugins/separate.js', rev: 'separate-batch', entries: separate }] : []),
+    ],
+  }
+  const preloads = graph.batches.filter(batch => batch.phase === 'application')
+    .map(batch => `<link rel="preload" as="script" href="${batch.url}">`).join('')
+  return `<!doctype html><html><head><link rel="preload" as="image" href="/unrelated.png">${preloads}<script src="/plugins/bootstrap-batch.js"></script><script>globalThis["__DSH_BOOT__"] = ${JSON.stringify(graph)};</script></head><body></body></html>`
+}
+
+function parsedBoot(html: string): { rev: string; entries: BootEntry[]; batches: { phase: string; url: string; entries: string[] }[] } {
+  const text = /globalThis\["__DSH_BOOT__"\] = (\{.*\});<\/script>/u.exec(html)?.[1]
+  if (text === undefined) throw new Error('missing boot graph')
+  return JSON.parse(text) as { rev: string; entries: BootEntry[]; batches: { phase: string; url: string; entries: string[] }[] }
+}
+
+describe('optional mobile client module exclusion', () => {
+  const leaf: BootEntry = { id: '@example/leaf', url: '/plugins/leaf.js', rev: 'leaf' }
+
+  it('keeps the default graph and removes selected entries before forming batches and revision', () => {
+    const html = exclusionIndex([leaf, { id: '@example/solo', url: '/plugins/solo.js', rev: 'solo' }], ['@example/solo'])
+    const original = parsedBoot(rewriteMobileIndex(html))
+    const selected = parsedBoot(rewriteMobileIndex(html, ['@example/leaf', '@example/solo']))
+    expect(original.entries.map(entry => entry.id)).toContain('@example/leaf')
+    expect(selected.entries.map(entry => entry.id)).not.toContain('@example/leaf')
+    expect(selected.entries.map(entry => entry.id)).not.toContain('@example/solo')
+    expect(selected.batches.flatMap(batch => batch.entries)).not.toContain('@example/leaf')
+    expect(selected.batches.flatMap(batch => batch.entries)).not.toContain('@example/solo')
+    expect(selected.batches.some(batch => batch.url === '/plugins/separate.js')).toBe(false)
+    expect(rewriteMobileIndex(html, ['@example/leaf', '@example/solo'])).not.toContain('href="/plugins/application.js"')
+    expect(rewriteMobileIndex(html, ['@example/leaf', '@example/solo'])).not.toContain('href="/plugins/separate.js"')
+    expect(rewriteMobileIndex(html, ['@example/leaf', '@example/solo'])).toContain('<link rel="preload" as="image" href="/unrelated.png">')
+    expect(rewriteMobileIndex(html, ['@example/leaf', '@example/solo'])).toContain('<script src="/plugins/bootstrap-batch.js"></script>')
+    expect(selected.rev).not.toBe(original.rev)
+    const plan = parseMobileBootPlan(html, ['@example/leaf', '@example/solo'])
+    expect(plan.planEntries?.map(entry => entry.id)).not.toContain('@example/leaf')
+  })
+
+  it('rejects missing, core, immediate, and bootstrap modules', () => {
+    const html = exclusionIndex([leaf, { id: '@example/urgent', url: '/plugins/urgent.js', rev: 'urgent', immediately: true }])
+    for (const id of [layoutId, connectionModule, 'dsh-mobile', '@example/urgent', 'bootstrap']) {
+      expect(() => rewriteMobileIndex(html, [id])).toThrow(`module ${id} is required for mobile boot or belongs to a bootstrap batch`)
+    }
+    expect(() => rewriteMobileIndex(html, ['@example/missing'])).toThrow('module @example/missing is not installed')
+    expect(() => rewriteMobileIndex(html, ['@example/leaf', '@example/leaf'])).toThrow('duplicate module ids')
+  })
+
+  it('rejects exclusions still required by a retained inject or external edge', () => {
+    const injected: BootEntry = { id: '@example/inject-consumer', url: '/plugins/inject.js', rev: 'inject', inject: [leaf.id] }
+    const external: BootEntry = { id: '@example/external-consumer', url: '/plugins/external.js', rev: 'external', external: [`${leaf.id}/client`] }
+    expect(() => rewriteMobileIndex(exclusionIndex([leaf, injected]), [leaf.id])).toThrow(`module ${injected.id} still depends on excluded module ${leaf.id}`)
+    expect(() => rewriteMobileIndex(exclusionIndex([leaf, external]), [leaf.id])).toThrow(`module ${external.id} still depends on excluded module ${leaf.id}`)
+    const selected = parsedBoot(rewriteMobileIndex(exclusionIndex([leaf, injected, external]), [leaf.id, injected.id, external.id]))
+    expect(selected.entries.map(entry => entry.id)).not.toContain(leaf.id)
+  })
+
+  it('reassembles a second application batch when an excluded module shares it with retained modules', () => {
+    const html = exclusionIndex([leaf, { id: '@example/other', url: '/plugins/other.js', rev: 'other' }], [leaf.id, '@example/other'])
+    const output = rewriteMobileIndex(html, [leaf.id])
+    const graph = parsedBoot(output)
+    expect(graph.entries.map(entry => entry.id)).not.toContain(leaf.id)
+    expect(graph.batches.flatMap(batch => batch.entries)).toContain('@example/other')
+    expect(graph.batches.flatMap(batch => batch.entries)).not.toContain(leaf.id)
+    expect(graph.batches.filter(batch => batch.url.startsWith('/mobile-access/mobile-boot/'))).toHaveLength(2)
+    expect(output).not.toContain('href="/plugins/separate.js"')
+    expect((output.match(/<link rel="preload" as="script" href="\/mobile-access\/mobile-boot\//gu) ?? [])).toHaveLength(2)
+  })
+
+  it('can omit document preview with its dependent Open In entry across application batches', () => {
+    const documentPreview = '@deepseek-ai/dsh-client-ui-sidebar-documentpreview'
+    const openInApp = '@deepseek-ai/dsh-client-ui-open-in-app'
+    const html = exclusionIndex([
+      { id: documentPreview, url: '/plugins/document-preview.js', rev: 'preview' },
+      { id: openInApp, url: '/plugins/open-in-app.js', rev: 'open', inject: [documentPreview] },
+      { id: '@example/retained', url: '/plugins/retained.js', rev: 'retained' },
+    ], [openInApp, '@example/retained'])
+    expect(() => rewriteMobileIndex(html, [documentPreview])).toThrow(`module ${openInApp} still depends on excluded module ${documentPreview}`)
+    const output = rewriteMobileIndex(html, [documentPreview, openInApp])
+    const graph = parsedBoot(output)
+    expect(graph.entries.map(entry => entry.id)).not.toContain(documentPreview)
+    expect(graph.entries.map(entry => entry.id)).not.toContain(openInApp)
+    expect(graph.entries.map(entry => entry.id)).toContain('@example/retained')
+    expect(graph.batches.flatMap(batch => batch.entries)).toContain('@example/retained')
+    expect(output).not.toContain('href="/plugins/application.js"')
+    expect(output).not.toContain('href="/plugins/separate.js"')
+  })
+
+  it('rewrites an entity-escaped application preload to the actual mobile batch', () => {
+    const html = exclusionIndex([leaf]).replaceAll('/plugins/application.js', '/plugins/application.js?a=1&amp;b=2')
+      .replace('"url":"/plugins/application.js?a=1&amp;b=2"', '"url":"/plugins/application.js?a=1&b=2"')
+    const output = rewriteMobileIndex(html, [leaf.id])
+    expect(output).not.toContain('href="/plugins/application.js?a=1&amp;b=2"')
+    expect(output).toMatch(/<link rel="preload" as="script" href="\/mobile-access\/mobile-boot\/[a-f\d]{64}\.js">/u)
+  })
+
+  it('requires a complete batched graph when exclusion is selected', () => {
+    expect(() => rewriteMobileIndex(index([{ id: layoutId, url: '/layout.js', rev: 'layout', inject: ['@deepseek-ai/dsh-client-runtime', '@deepseek-ai/dsh-client-ui-theme'] }]), [leaf.id]))
+      .toThrow('this DSH version has no batched boot manifest')
+  })
+})
 
 describe('mobile boot batch chunking', () => {
   it('merges every entry into one batch when no sizes are provided', () => {

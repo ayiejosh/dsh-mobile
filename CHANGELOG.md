@@ -7,6 +7,7 @@ Notable changes to DSH Mobile are recorded here. GitHub Releases remain the sour
 - Expose `panelInfo` on the mobile layout service for DSH `0.1.7-rc.2`, so built-in panels such as Plugin Manager can mount without breaking the dedicated mobile frontend (thanks @chintoleung for [PR #104](https://github.com/saya-ch/dsh-mobile/pull/104) and [#103](https://github.com/saya-ch/dsh-mobile/issues/103)).
 - Derive mobile boot batches in a canonical entry order. The same module set now produces stable batch URLs, response bodies and ETags when upstream entry order changes, avoiding unnecessary new cache entries (thanks @xhwxt for [PR #105](https://github.com/saya-ch/dsh-mobile/pull/105)).
 - Extend source-contract and isolated browser-startup checks to DSH `0.1.7-rc.2`, alongside `0.1.7-alpha.2` and `0.1.7-rc.1`.
+- Add opt-in `excludedClientModules` for mobile-only boot slimming. Exact package ids are checked against the live graph; boot-critical entries and modules still required by retained entries are refused. The default graph, desktop page, and stock frontend remain unchanged (thanks @xhwxt for [#108](https://github.com/saya-ch/dsh-mobile/issues/108)).
 
 ## 0.4.6 - 2026-09-24
 
