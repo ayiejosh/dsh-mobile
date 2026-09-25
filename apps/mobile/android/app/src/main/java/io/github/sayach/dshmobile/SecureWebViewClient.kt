@@ -11,6 +11,7 @@ import android.webkit.WebResourceRequest
 import android.webkit.WebResourceResponse
 import android.webkit.WebView
 import android.webkit.WebViewClient
+import android.webkit.RenderProcessGoneDetail
 
 /** Categories of main-frame failures that need a native recovery surface. */
 internal enum class LoadFailure {
@@ -54,10 +55,12 @@ internal class SecureWebViewClient(
     private val openExternal: (Uri) -> Unit,
     private val onBlocked: () -> Unit,
     private val onFailure: (LoadFailure) -> Unit,
+    private val onRendererGone: () -> Unit,
     private val onTopLevelUrlChanged: (String) -> Unit,
     private val onLoaded: () -> Unit,
 ) : WebViewClient() {
     private val handler = Handler(Looper.getMainLooper())
+    private val document = WebViewDocumentState(origin)
     private var timeout: Runnable? = null
     private var loadingUrl: String? = null
 
@@ -78,6 +81,7 @@ internal class SecureWebViewClient(
     }
 
     override fun onPageStarted(view: WebView, url: String, favicon: android.graphics.Bitmap?) {
+        document.started()
         onTopLevelUrlChanged(url)
         if (url != "about:blank" && !GatewayUrlPolicy.isSameOrigin(origin, url)) {
             clearTimeout()
@@ -89,9 +93,10 @@ internal class SecureWebViewClient(
     }
 
     override fun onPageFinished(view: WebView, url: String) {
-        if (GatewayUrlPolicy.isSameOrigin(origin, url)) {
-            if (loadingUrl == url) clearTimeout()
-            onLoaded()
+        val currentUrl = view.url ?: url
+        if (sameMainDocumentUrl(origin, currentUrl, url)) {
+            clearTimeout()
+            if (document.finished(url, currentUrl)) onLoaded()
         }
     }
 
@@ -102,6 +107,7 @@ internal class SecureWebViewClient(
         if (pinned) {
             handler.proceed()
         } else {
+            document.failed()
             clearTimeout()
             handler.cancel()
             view.stopLoading()
@@ -111,6 +117,7 @@ internal class SecureWebViewClient(
 
     override fun onReceivedError(view: WebView, request: WebResourceRequest, error: WebResourceError) {
         if (request.isForMainFrame) {
+            document.failed()
             clearTimeout()
             onFailure(LoadFailure.NETWORK)
         }
@@ -122,6 +129,7 @@ internal class SecureWebViewClient(
         errorResponse: WebResourceResponse,
     ) {
         if (request.isForMainFrame && errorResponse.statusCode >= 400) {
+            document.failed()
             clearTimeout()
             onFailure(loadFailureForHttpStatus(errorResponse.statusCode))
         }
@@ -133,9 +141,19 @@ internal class SecureWebViewClient(
         threatType: Int,
         callback: SafeBrowsingResponse,
     ) {
-        clearTimeout()
         callback.backToSafety(true)
-        onFailure(LoadFailure.NETWORK)
+        if (request.isForMainFrame) {
+            document.failed()
+            clearTimeout()
+            onFailure(LoadFailure.NETWORK)
+        }
+    }
+
+    override fun onRenderProcessGone(view: WebView, detail: RenderProcessGoneDetail): Boolean {
+        document.failed()
+        clearTimeout()
+        onRendererGone()
+        return true
     }
 
     private fun armTimeout(view: WebView, url: String) {
@@ -145,6 +163,7 @@ internal class SecureWebViewClient(
             if (loadingUrl != url) return@Runnable
             loadingUrl = null
             timeout = null
+            document.failed()
             view.stopLoading()
             onFailure(LoadFailure.NETWORK)
         }

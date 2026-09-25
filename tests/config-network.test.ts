@@ -39,6 +39,22 @@ describe('gateway configuration', () => {
     expect(resolved.customCssFile).toBe(join(tmpdir(), 'mobile.css'))
     expect(resolved.customScriptFile).toBe(join(tmpdir(), 'mobile.js'))
     expect(resolved.mobileCompatibilityFile).toBe(fileURLToPath(new URL('../src/mobile-compat.js', import.meta.url)))
+    expect(resolved.excludedClientModules).toEqual([])
+  })
+
+  it('accepts exact, unique optional client module ids and rejects malformed selections', () => {
+    const selected = ['@example/optional-client']
+    const loader = Config({ stateFile, controlFile, initiallyEnabled: false, tls: { mode: 'disabled' }, excludedClientModules: selected })
+    const resolved = parseGatewayConfig(loader)
+    selected.push('@example/another-client')
+    expect(resolved.excludedClientModules).toEqual(['@example/optional-client'])
+    expect(Object.isFrozen(resolved.excludedClientModules)).toBe(true)
+    expect(() => parseGatewayConfig({ stateFile, tls: { mode: 'disabled' }, excludedClientModules: ['a', 'a'] }))
+      .toThrow('excludedClientModules must not contain duplicate ids')
+    for (const value of [[' a '], [''], ['a', 1], 'a']) {
+      expect(() => parseGatewayConfig({ stateFile, tls: { mode: 'disabled' }, excludedClientModules: value }))
+        .toThrow('excludedClientModules must be an array of exact, non-empty client module ids')
+    }
   })
 
   it('requires an absolute path for a compatibility bundle override', () => {

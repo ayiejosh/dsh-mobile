@@ -10,6 +10,7 @@ const dshBin = process.env.DSH_BOOT_SMOKE_BIN
   ?? fileURLToPath(new URL('../node_modules/@deepseek-ai/dsh/lib/bin.js', import.meta.url))
 const injectedFailure = process.argv.includes('--negative-control')
 const blockedRemoteMux = process.argv.includes('--negative-control-mux')
+const excludedClientModules = process.env.DSH_BOOT_SMOKE_EXCLUDED_MODULES?.split(',').map(id => id.trim()).filter(Boolean) ?? []
 const startedAt = Date.now()
 const START_TIMEOUT_MS = 90_000
 const CLIENT_TIMEOUT_MS = 60_000
@@ -106,6 +107,7 @@ async function createProfile(root) {
       customCssFile: join(mobileState, 'mobile.css'),
       customScriptFile: join(mobileState, 'mobile.js'),
       initiallyEnabled: true,
+      ...(excludedClientModules.length > 0 ? { excludedClientModules } : {}),
       listenHost: '127.0.0.1',
       listenPort: 0,
       allowedCidrs: ['127.0.0.0/8'],
@@ -187,6 +189,7 @@ async function inspectBrowser(baseUrl, logs) {
   try {
     const desktop = await browser.newPage()
     await desktop.goto(baseUrl, { waitUntil: 'domcontentloaded' })
+    const stockBatches = await desktop.evaluate(() => window.__DSH_BOOT__?.batches ?? [])
     const control = await desktop.evaluate(async () => {
       const response = await fetch('/api/mobile-access/lan/control')
       return { status: response.status, body: await response.json() }
@@ -217,7 +220,8 @@ async function inspectBrowser(baseUrl, logs) {
       failedRequests.push({ path: new URL(request.url()).pathname, type: request.resourceType(), failure: request.failure()?.errorText })
     })
     phone.on('response', response => {
-      responses.push({ path: new URL(response.url()).pathname, status: response.status(), type: response.request().resourceType(), contentType: response.headers()['content-type'] })
+      const url = new URL(response.url())
+      responses.push({ path: `${url.pathname}${url.search}`, status: response.status(), type: response.request().resourceType(), contentType: response.headers()['content-type'] })
       if (response.status() >= 400 && /\/mobile-access\/mobile-boot\/|\/plugins\//u.test(response.url())) {
         failedBundles.push(`${response.status()} ${new URL(response.url()).pathname}`)
       }
@@ -266,6 +270,24 @@ async function inspectBrowser(baseUrl, logs) {
     if (injectedFailure && !injected) throw new Error('Negative control did not intercept any DSH client script')
     if (!Array.isArray(plan?.entries) || !plan.entries.some(row => row.id === 'dsh-mobile')) {
       throw new Error(`Real DSH boot manifest did not contain dsh-mobile: entries=${sanitized(JSON.stringify(plan?.entries?.map(row => row.id) ?? []))}`)
+    }
+    if (excludedClientModules.length > 0) {
+      for (const id of excludedClientModules) {
+        if (!stockBatches.some(batch => batch.entries.includes(id))) throw new Error(`Selected module ${id} is absent from the stock DSH graph`)
+        if (plan.entries.some(row => row.id === id)) throw new Error(`Selected module ${id} remains in the mobile graph`)
+      }
+    }
+    const oldAffected = stockBatches.filter(batch => batch.phase === 'application'
+      && batch.entries.some(id => id === '@deepseek-ai/dsh-client-ui-layout' || excludedClientModules.includes(id)))
+    const downloadedScripts = new Set(responses.filter(item => item.type === 'script').map(item => item.path))
+    for (const batch of oldAffected) {
+      const url = new URL(batch.url, baseUrl)
+      if (downloadedScripts.has(`${url.pathname}${url.search}`)) {
+        throw new Error(`Stock application batch was still downloaded: ${batch.url}`)
+      }
+    }
+    if (excludedClientModules.length > 0) {
+      console.log(`Optional exclusion smoke: ${excludedClientModules.join(', ')}; ${String(oldAffected.length)} old application batches not downloaded; ${String(responses.filter(item => item.type === 'script' && item.path.startsWith('/mobile-access/mobile-boot/')).length)} mobile boot scripts fetched`)
     }
     const mobileFrontend = await phone.evaluate(() => window.__DSH_MOBILE_FRONTEND__)
     if (mobileFrontend !== 'dedicated') throw new Error('Mobile gateway did not select the dedicated frontend')

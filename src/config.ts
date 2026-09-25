@@ -44,6 +44,8 @@ export interface PluginConfig {
   mobileLayoutFile?: string
   /** Standalone browser compatibility bundle used before DSH boot. */
   mobileCompatibilityFile?: string
+  /** Optional application-phase client package ids omitted only from the mobile boot graph. */
+  excludedClientModules?: string[]
   /** Stable public discovery identifier; it is not an authentication secret. */
   instanceId?: string
   /** Managed CA certificate offered to the Android installer after fingerprint binding. */
@@ -85,6 +87,7 @@ export interface ResolvedGatewayConfig {
   readonly customScriptFile: string
   readonly mobileLayoutFile: string
   readonly mobileCompatibilityFile: string
+  readonly excludedClientModules: readonly string[]
   readonly instanceId: string
   readonly pairingCaFile?: string
   readonly tls: TlsConfig
@@ -122,6 +125,7 @@ export const Config: z<PluginConfig> = z.object({
   customScriptFile: z.string().hidden(),
   mobileLayoutFile: z.string().hidden(),
   mobileCompatibilityFile: z.string().hidden(),
+  excludedClientModules: z.array(String).default([]),
   instanceId: z.string().hidden(),
   pairingCaFile: z.string().hidden(),
   initiallyEnabled: z.boolean().hidden().required(),
@@ -166,6 +170,16 @@ function absoluteFile(value: unknown, name: string): string {
     throw new Error(`${name} must be an absolute file path`)
   }
   return resolve(value)
+}
+
+function excludedClientModules(value: unknown): readonly string[] {
+  if (value === undefined) return Object.freeze([])
+  if (!Array.isArray(value) || value.some(id => typeof id !== 'string' || id.length === 0 || id.trim() !== id)) {
+    throw new Error('excludedClientModules must be an array of exact, non-empty client module ids')
+  }
+  const ids = value as string[]
+  if (new Set(ids).size !== ids.length) throw new Error('excludedClientModules must not contain duplicate ids')
+  return Object.freeze([...ids])
 }
 
 /** Resolve the hidden runtime-control file independently from gateway configuration. */
@@ -300,6 +314,7 @@ export function parseGatewayConfig(raw: unknown): ResolvedGatewayConfig {
     mobileCompatibilityFile: value.mobileCompatibilityFile === undefined
       ? fileURLToPath(new URL('./mobile-compat.js', import.meta.url))
       : absoluteFile(value.mobileCompatibilityFile, 'mobileCompatibilityFile'),
+    excludedClientModules: excludedClientModules(value.excludedClientModules),
     instanceId: value.instanceId === undefined
       ? createHash('sha256').update(absoluteFile(value.stateFile, 'stateFile')).digest('hex')
       : /^[a-f\d]{64}$/u.test(value.instanceId)

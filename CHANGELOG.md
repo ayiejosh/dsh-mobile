@@ -2,6 +2,18 @@
 
 Notable changes to DSH Mobile are recorded here. GitHub Releases remain the source for downloadable packages and complete generated commit notes.
 
+## 0.4.7 - 2026-09-25
+
+- Expose `panelInfo` on the mobile layout service for DSH `0.1.7-rc.2`, so built-in panels such as Plugin Manager can mount without breaking the dedicated mobile frontend (thanks @chintoleung for [PR #104](https://github.com/saya-ch/dsh-mobile/pull/104) and [#103](https://github.com/saya-ch/dsh-mobile/issues/103)).
+- Derive mobile boot batches in a canonical entry order. The same module set now produces stable batch URLs, response bodies and ETags when upstream entry order changes, avoiding unnecessary new cache entries (thanks @xhwxt for [PR #105](https://github.com/saya-ch/dsh-mobile/pull/105)).
+- Remove the original application-batch preload when the dedicated mobile page replaces that batch, preventing a duplicate multi-megabyte transfer. On WebView 151+, raise this app's HTTP cache quota to at least 64 MiB so large versioned scripts can be reused after a cold start; older WebViews retain their default policy (thanks @xhwxt for [#107](https://github.com/saya-ch/dsh-mobile/issues/107)).
+- Extend source-contract and isolated browser-startup checks to DSH `0.1.7-rc.2`, alongside `0.1.7-alpha.2` and `0.1.7-rc.1`.
+- Add opt-in `excludedClientModules` for mobile-only boot slimming. Exact package ids are checked against the live graph; boot-critical entries and modules still required by retained entries are refused. The default graph, desktop page, and stock frontend remain unchanged (thanks @xhwxt for [#108](https://github.com/saya-ch/dsh-mobile/issues/108)).
+- Let the right sidebar fill the phone viewport instead of clipping file and plugin panels behind a narrow overlay edge; keep the wide-screen column layout and a reachable collapse control.
+- Keep the on-screen keyboard closed when opening the composer Add menu, without affecting other listbox controls (thanks @ayiejosh for [PR #109](https://github.com/saya-ch/dsh-mobile/pull/109)).
+- In the Android App, use plain Enter to add a draft line when the on-screen keyboard is visible and no hardware keyboard is attached; retain DSH's original Enter behavior for browsers, unknown keyboard state, menus and IME composition (thanks @ayiejosh for [PR #110](https://github.com/saya-ch/dsh-mobile/pull/110)).
+- Clear the Android page-load timer when WebView reports the same root document with a normalized URL, preventing a completed load from becoming a delayed false timeout. After native session renewal, keep a live DSH WebView instead of rebuilding it; reload only when the document is unavailable, and bound repeated renderer-crash recovery.
+
 ## 0.4.6 - 2026-09-24
 
 - Use the configured HTTP proxy as a second, bounded remote-health probe only when the direct probe fails. The diagnostic respects `NO_PROXY`, reports proxy-only reachability as a warning rather than proof that a phone can connect, and retains the direct result if both routes fail (thanks @abworks-dev for [PR #99](https://github.com/saya-ch/dsh-mobile/pull/99)).

@@ -284,6 +284,7 @@ describe('remote Funnel gateway configuration', () => {
       publicAuthorities: ['127.0.0.1'],
       allowedCidrs: ['127.0.0.0/8'],
       stateFile: join(tmpdir(), 'dsh-mobile-remote-template.json'),
+      excludedClientModules: ['@example/optional-client'],
       tls: { mode: 'disabled' },
     })
     const config = remoteGatewayConfig(
@@ -296,6 +297,7 @@ describe('remote Funnel gateway configuration', () => {
 
     expect(config.listenPort).toBe(45_321)
     expect(config.authorities).toEqual([{ hostname: 'example.r8.cpolar.cn', port: 443 }])
+    expect(config.excludedClientModules).toEqual(['@example/optional-client'])
   })
 })
 

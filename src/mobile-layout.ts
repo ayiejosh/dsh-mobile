@@ -111,7 +111,9 @@ export function resolveMobileRightbarLayout(
   track: boolean,
   fullscreen: boolean,
 ): MobileRightbarLayout {
-  const overlayWidth = Math.min(viewportWidth * 0.94, RIGHTBAR_MAX_WIDTH_PX)
+  const overlayWidth = isWideViewportLayout(viewportWidth)
+    ? Math.min(viewportWidth * 0.94, RIGHTBAR_MAX_WIDTH_PX)
+    : viewportWidth
   if (!track || fullscreen || (!isWideViewportLayout(viewportWidth) && sidebarOpen)) {
     return Object.freeze({ docked: false, width: overlayWidth })
   }
@@ -387,6 +389,7 @@ html,body,#root{width:100%;height:100%;overflow:hidden}
 .dshm-details{position:fixed;z-index:80;inset:0 0 0 auto;box-sizing:border-box;width:min(94vw,460px);max-width:100%;padding-top:env(safe-area-inset-top);overflow:hidden;background:var(--dsw-alias-bg-layer-1,#fff);box-shadow:-18px 0 46px rgb(15 23 42 / 18%);transform:translateX(104%);transition:transform 190ms cubic-bezier(.22,1,.36,1)}
 .dshm-details[data-open=true]{transform:translateX(0)}
 .dshm-details[data-open=false]{pointer-events:none;visibility:hidden;transition:transform 190ms cubic-bezier(.22,1,.36,1),visibility 0s linear 190ms}
+@media(max-width:899px){.dshm-details{width:100%;max-width:100%;box-shadow:none}.dshm-details [data-sidebar-right-toggle],.dshm-details [data-sidebar-right-mode]{min-width:48px;min-height:48px}}
 .dshm-scrim{position:fixed;z-index:65;inset:0;border:0;background:rgb(15 23 42 / 40%);opacity:0;pointer-events:none;transition:opacity 180ms ease-out}
 .dshm-scrim[data-open=true]{opacity:1;pointer-events:auto}
 .dshm-overlay{position:fixed;z-index:90;inset:0;pointer-events:none}.dshm-overlay>*{pointer-events:auto}
@@ -456,11 +459,12 @@ function MobileAppFrame(props: MobileRootProps & {
     state.rightbarFullscreen,
   )
   const rightbarDocked = state.detailsOpen && rightbar.docked
+  const rightbarFullWidth = state.detailsOpen && !rightbarDocked && !wideViewport
   const [documentLanguage, setDocumentLanguage] = useState(document.documentElement.lang)
   const browserLanguages = navigator.languages.length > 0 ? navigator.languages : [navigator.language]
   const language = resolveMobileLayoutLanguage(documentLanguage, browserLanguages)
   const messages = MOBILE_LAYOUT_MESSAGES[language]
-  const scrimOpen = isMobileScrimOpen(state.sidebarOpen, state.detailsOpen && !rightbarDocked, wideViewport)
+  const scrimOpen = !rightbarFullWidth && isMobileScrimOpen(state.sidebarOpen, state.detailsOpen && !rightbarDocked, wideViewport)
   const activeSessionId = props.useSessions(session => {
     const current = session.current
     return current !== undefined && session.byId[current]?.blank === false ? current : undefined
@@ -571,6 +575,7 @@ function MobileAppFrame(props: MobileRootProps & {
     createElement('main', {
       className: 'dshm-main',
       'data-dsh-mobile-session': activeSessionId,
+      ...(rightbarFullWidth ? { inert: '', 'aria-hidden': true } : {}),
       // Legacy dsh-web community plugins use semantic pane attributes as their
       // compatibility path when the stock CSS-module column names are absent.
       'data-pane': 'conversation',
@@ -658,10 +663,7 @@ export function apply(ctx: MobileClientContext): void {
     // ("strict standard hook 'panelInfo' has no source") and renders as a dead
     // cell — the workspace sidebar's session list lives exactly there.
     const disposePanelInfo = typeof ctx.slots.provideRoot === 'function'
-      ? ctx.slots.provideRoot({ hooks: { panelInfo: {
-          getSnapshot: () => controller.getSnapshot().panelInfo,
-          subscribe: (listener: () => void) => controller.subscribe(listener),
-        } } })
+      ? ctx.slots.provideRoot({ hooks: { panelInfo: controller.panelInfo } })
       : () => {}
     const disposeRoot = ctx.slots.register({
       name: 'root',

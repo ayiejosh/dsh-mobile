@@ -117,14 +117,36 @@ async function request(
 async function udpDiscovery(port: number): Promise<Record<string, unknown>> {
   const client = createSocket('udp4')
   return new Promise((resolve, reject) => {
-    const timer = setTimeout(() => { client.close(); reject(new Error('UDP discovery timed out')) }, 2_000)
-    client.once('error', (error) => { clearTimeout(timer); client.close(); reject(error) })
-    client.once('message', (message) => {
+    let settled = false
+    let retry: ReturnType<typeof setInterval> | undefined
+    const finish = (complete: () => void): void => {
+      if (settled) return
+      settled = true
       clearTimeout(timer)
+      if (retry !== undefined) clearInterval(retry)
       client.close()
-      resolve(JSON.parse(message.toString('utf8')) as Record<string, unknown>)
+      complete()
+    }
+    const timer = setTimeout(() => finish(() => reject(new Error('UDP discovery timed out'))), 5_000)
+    const send = (): void => {
+      client.send(Buffer.from('DSH_MOBILE_DISCOVER_V1', 'ascii'), port, '127.0.0.1', error => {
+        if (error !== null) finish(() => reject(error))
+      })
+    }
+    client.once('error', error => finish(() => reject(error)))
+    client.once('message', (message) => {
+      try {
+        const payload = JSON.parse(message.toString('utf8')) as Record<string, unknown>
+        finish(() => resolve(payload))
+      } catch (error) {
+        finish(() => reject(error))
+      }
     })
-    client.send(Buffer.from('DSH_MOBILE_DISCOVER_V1', 'ascii'), port, '127.0.0.1')
+    client.bind(0, '127.0.0.1', () => {
+      if (settled) return
+      send()
+      retry = setInterval(send, 250)
+    })
   })
 }
 
@@ -211,17 +233,21 @@ async function upstream(
   upgradeHeaderLines: string[] = [],
   upgradeHeaderBytes?: number,
   batchedBundleResponder?: BatchedBundleResponder,
+  extraBatchedEntries = 0,
+  secondApplicationBatchEntries = 0,
 ): Promise<{
   port: number
   observations: UpstreamObservation[]
   upgradeObservations: IncomingHttpHeaders[]
   upgradeResponseBytes: number[]
   releaseHold: () => void
+  setBatchEntriesReversed: (reversed: boolean) => void
 }> {
   const observations: UpstreamObservation[] = []
   const upgradeObservations: IncomingHttpHeaders[] = []
   const upgradeResponseBytes: number[] = []
   const held: Array<() => void> = []
+  let batchEntriesReversed = false
   const upgraded = new Set<Socket>()
   const server = createServer(async (incoming, response) => {
     const chunks: Buffer[] = []
@@ -270,6 +296,11 @@ async function upstream(
               inject: ['@deepseek-ai/dsh-client-locale', '@deepseek-ai/dsh-client-ui-renderer', '@deepseek-ai/dsh-client-ui-session', '@deepseek-ai/dsh-client-ui-theme'],
             },
             { id: 'feature', url: pluginUrl('feature', 'feature', 'feature'), rev: 'feature' },
+            ...Array.from({ length: extraBatchedEntries }, (_, index) => ({
+              id: `feature-${String(index)}`,
+              url: pluginUrl(`feature-${String(index)}`, `feature-${String(index)}`, `feature-${String(index)}`),
+              rev: `feature-${String(index)}`,
+            })),
           ]
       if (boot === 'remote-settings') entries.push(
         { id: '@deepseek-ai/dsh-client-connection', url: '/plugins/connection.js?rev=connection', rev: 'connection', inject: [] },
@@ -278,10 +309,22 @@ async function upstream(
         { id: '@deepseek-ai/dsh-client-ui-settings', url: '/plugins/settings.js?rev=settings', rev: 'settings', inject: ['@deepseek-ai/dsh-api-remotes'] },
         { id: 'dsh-mobile', url: '/plugins/mobile.js?rev=mobile', rev: 'mobile', inject: ['@deepseek-ai/dsh-client-connection', '@deepseek-ai/dsh-client-ui-sidebar'] },
       )
+      const batchEntryIds = entries.map(entry => entry.id)
+      if (batchEntriesReversed) batchEntryIds.reverse()
+      const applicationBatchUrl = boot === 'batched-relative' || boot === 'batched-relative-invalid'
+        ? 'plugins/??feature/client.js&rev=stock' : '/plugins/application.js?rev=stock'
+      const applicationBatches = secondApplicationBatchEntries === 0
+        ? [{ phase: 'application', url: applicationBatchUrl, rev: 'stock-batch', entries: batchEntryIds }]
+        : [
+            { phase: 'application', url: applicationBatchUrl, rev: 'stock-batch', entries: batchEntryIds.slice(0, -secondApplicationBatchEntries) },
+            { phase: 'application', url: '/plugins/application-2.js?rev=stock', rev: 'stock-batch-2', entries: batchEntryIds.slice(-secondApplicationBatchEntries) },
+          ]
       const graph = boot === 'legacy'
         ? { rev: 'stock', entries }
-        : { rev: 'stock', entries, batches: [{ phase: 'application', url: boot === 'batched-relative' || boot === 'batched-relative-invalid' ? 'plugins/??feature/client.js&rev=stock' : '/plugins/application.js?rev=stock', rev: 'stock-batch', entries: entries.map(entry => entry.id) }] }
-      const body = `<!doctype html><html><head><script>globalThis["__DSH_BOOT__"] = ${JSON.stringify(graph)};</script></head><body></body></html>`
+        : { rev: 'stock', entries, batches: applicationBatches }
+      const preload = boot === 'legacy' ? '' : applicationBatches
+        .map(batch => `<link rel="preload" as="script" href="${batch.url.replaceAll('&', '&amp;')}">`).join('')
+      const body = `<!doctype html><html><head>${preload}<script>globalThis["__DSH_BOOT__"] = ${JSON.stringify(graph)};</script></head><body></body></html>`
       response.writeHead(200, { 'content-type': 'text/html; charset=utf-8', 'content-length': Buffer.byteLength(body) })
       response.end(body)
       return
@@ -392,6 +435,7 @@ async function upstream(
     upgradeObservations,
     upgradeResponseBytes,
     releaseHold: () => { for (const release of held.splice(0)) release() },
+    setBatchEntriesReversed: (reversed) => { batchEntriesReversed = reversed },
   }
 }
 
@@ -777,6 +821,8 @@ describe('HTTP gateway', () => {
     const match = /"url":"(\/mobile-access\/mobile-boot\/[a-f\d]{64}\.js)"/u.exec(mobile.body)
     expect(match?.[1]).toBeDefined()
     const path = match![1]!
+    expect(mobile.body).not.toContain('href="/plugins/application.js?rev=stock"')
+    expect(mobile.body).toContain(`<link rel="preload" as="script" href="${path}">`)
     const batch = await request(instance.address().port, path, { headers })
     expect(batch.status).toBe(200)
     expect(batch.headers['content-type']).toBe('text/javascript; charset=utf-8')
@@ -824,6 +870,146 @@ describe('HTTP gateway', () => {
     expect(inner.observations.map(observation => observation.url)).toContain('/plugins/feature.js?rev=feature')
     expect(inner.observations.map(observation => observation.url)).not.toContain('/plugins/layout.js?rev=layout')
     expect(inner.observations.map(observation => observation.url)).not.toContain('/plugins/application.js?rev=stock')
+  })
+
+  it('omits an optional module from the served graph, size probes, and assembled mobile batch only', async () => {
+    const inner = await upstream('batched')
+    const directory = await mkdtemp(join(tmpdir(), 'dsh-mobile-exclusion-'))
+    cleanups.push(() => rm(directory, { recursive: true, force: true }))
+    const mobileLayoutFile = join(directory, 'mobile-layout.js')
+    await writeFile(mobileLayoutFile, 'globalThis.__dedicatedMobileLayout = true;\n', 'utf8')
+    const instance = await gateway(inner.port, { excludedClientModules: ['feature'], mobileLayoutFile })
+    const paired = await pair(instance)
+    const headers = {
+      ...browserHeaders(instance),
+      accept: 'text/html,application/xhtml+xml',
+      cookie: `${SESSION_COOKIE}=${paired.session}`,
+    }
+    const page = await request(instance.address().port, '/', { headers })
+    expect(page.status).toBe(200)
+    expect(page.body).not.toContain('"id":"feature"')
+    const path = /"url":"(\/mobile-access\/mobile-boot\/[a-f\d]{64}\.js)"/u.exec(page.body)?.[1]
+    expect(path).toBeDefined()
+    expect(page.body).not.toContain('href="/plugins/application.js?rev=stock"')
+    expect(page.body).toContain(`<link rel="preload" as="script" href="${path}">`)
+    const batch = await request(instance.address().port, path!, { headers })
+    expect(batch.status).toBe(200)
+    expect(batch.body).not.toContain('/plugins/feature.js?rev=feature')
+    expect(inner.observations.map(observation => observation.url)).not.toContain('/plugins/feature.js?rev=feature')
+
+    const stock = await request(instance.address().port, '/?frontend=stock', { headers })
+    expect(stock.status).toBe(200)
+    expect(stock.body).toContain('"id":"feature"')
+  })
+
+  it('reassembles a partially excluded second application batch without fetching its old preload', async () => {
+    const inner = await upstream('batched', false, Buffer.alloc(0), [], undefined, undefined, 1, 2)
+    const directory = await mkdtemp(join(tmpdir(), 'dsh-mobile-second-batch-exclusion-'))
+    cleanups.push(() => rm(directory, { recursive: true, force: true }))
+    const mobileLayoutFile = join(directory, 'mobile-layout.js')
+    await writeFile(mobileLayoutFile, 'globalThis.__dedicatedMobileLayout = true;\n', 'utf8')
+    const instance = await gateway(inner.port, { excludedClientModules: ['feature'], mobileLayoutFile })
+    const paired = await pair(instance)
+    const headers = {
+      ...browserHeaders(instance), accept: 'text/html', cookie: `${SESSION_COOKIE}=${paired.session}`,
+    }
+    const page = await request(instance.address().port, '/', { headers })
+    expect(page.status).toBe(200)
+    expect(page.body).not.toContain('"id":"feature"')
+    expect(page.body).not.toContain('href="/plugins/application.js?rev=stock"')
+    expect(page.body).not.toContain('href="/plugins/application-2.js?rev=stock"')
+    const paths = [...page.body.matchAll(/"url":"(\/mobile-access\/mobile-boot\/[a-f\d]{64}\.js)"/gu)].map(match => match[1]!)
+    expect(paths).toHaveLength(2)
+    const bodies: string[] = []
+    for (const path of paths) {
+      expect(page.body).toContain(`<link rel="preload" as="script" href="${path}">`)
+      const batch = await request(instance.address().port, path, { headers })
+      expect(batch.status).toBe(200)
+      expect(batch.body).not.toContain('/plugins/feature.js?rev=feature')
+      bodies.push(batch.body)
+    }
+    expect(bodies.some(body => body.includes('/plugins/feature-0.js?rev=feature-0'))).toBe(true)
+    expect(bodies.some(body => body.includes('__dedicatedMobileLayout = true'))).toBe(true)
+    expect(inner.observations.map(observation => observation.url)).toContain('/plugins/feature-0.js?rev=feature-0')
+    expect(inner.observations.map(observation => observation.url)).not.toContain('/plugins/feature.js?rev=feature')
+    expect(inner.observations.map(observation => observation.url)).not.toContain('/plugins/application-2.js?rev=stock')
+  })
+
+  it('reports a selected module missing from the live graph without serving a partial page', async () => {
+    const inner = await upstream('batched')
+    const instance = await gateway(inner.port, { excludedClientModules: ['feature-missing'] })
+    const paired = await pair(instance)
+    const warning = vi.spyOn(process, 'emitWarning').mockImplementation(() => undefined)
+    try {
+      const page = await request(instance.address().port, '/', {
+        headers: { ...browserHeaders(instance), accept: 'text/html', cookie: `${SESSION_COOKIE}=${paired.session}` },
+      })
+      expect(page.status).toBe(409)
+      expect(JSON.parse(page.body)).toEqual({
+        error: 'excluded_client_modules_invalid',
+        detail: 'excludedClientModules: module feature-missing is not installed in this DSH client graph',
+      })
+      expect(warning).toHaveBeenCalledWith(expect.stringContaining('module feature-missing is not installed'), {
+        code: 'DSH_MOBILE_MODULE_EXCLUSION_INVALID',
+      })
+    } finally {
+      warning.mockRestore()
+    }
+  })
+
+  it('refuses a manifest that would evict one of its own merged boot plans', async () => {
+    const inner = await upstream('batched', false, Buffer.alloc(0), [], undefined, undefined, 30)
+    const instance = await gateway(inner.port)
+    const measured = instance as unknown as { upstreamBundleSize(source: string): Promise<number> }
+    measured.upstreamBundleSize = async () => 5 * 1024 * 1024
+    const paired = await pair(instance)
+    const page = await request(instance.address().port, '/', {
+      headers: { ...browserHeaders(instance), accept: 'text/html', cookie: `${SESSION_COOKIE}=${paired.session}` },
+    })
+    expect(page.status).toBe(502)
+    expect(page.body).not.toContain('window.__DSH_BOOT__')
+  })
+
+  it('keeps the mobile boot resource and ETag stable when upstream batch entries reorder', async () => {
+    const inner = await upstream('batched')
+    const directory = await mkdtemp(join(tmpdir(), 'dsh-mobile-batch-order-'))
+    cleanups.push(() => rm(directory, { recursive: true, force: true }))
+    const mobileLayoutFile = join(directory, 'mobile-layout.js')
+    await writeFile(mobileLayoutFile, 'globalThis.__dedicatedMobileLayout = true;\n', 'utf8')
+
+    const firstGateway = await gateway(inner.port, { mobileLayoutFile })
+    const firstPairing = await pair(firstGateway)
+    const firstHeaders = {
+      ...browserHeaders(firstGateway),
+      accept: 'text/html,application/xhtml+xml',
+      cookie: `${SESSION_COOKIE}=${firstPairing.session}`,
+    }
+    const firstPage = await request(firstGateway.address().port, '/', { headers: firstHeaders })
+    const firstPath = /"url":"(\/mobile-access\/mobile-boot\/[a-f\d]{64}\.js)"/u.exec(firstPage.body)?.[1]
+    expect(firstPath).toBeDefined()
+    const firstBatch = await request(firstGateway.address().port, firstPath!, { headers: firstHeaders })
+    expect(firstBatch.status).toBe(200)
+
+    inner.setBatchEntriesReversed(true)
+    const secondGateway = await gateway(inner.port, { mobileLayoutFile })
+    const secondPairing = await pair(secondGateway)
+    const secondHeaders = {
+      ...browserHeaders(secondGateway),
+      accept: 'text/html,application/xhtml+xml',
+      cookie: `${SESSION_COOKIE}=${secondPairing.session}`,
+    }
+    const secondPage = await request(secondGateway.address().port, '/', { headers: secondHeaders })
+    const secondPath = /"url":"(\/mobile-access\/mobile-boot\/[a-f\d]{64}\.js)"/u.exec(secondPage.body)?.[1]
+    expect(secondPath).toBe(firstPath)
+    const cached = await request(secondGateway.address().port, secondPath!, {
+      headers: { ...secondHeaders, 'if-none-match': String(firstBatch.headers.etag) },
+    })
+    expect(cached.status).toBe(304)
+    expect(cached.rawBody).toHaveLength(0)
+    const secondBatch = await request(secondGateway.address().port, secondPath!, { headers: secondHeaders })
+    expect(secondBatch.status).toBe(200)
+    expect(secondBatch.rawBody).toEqual(firstBatch.rawBody)
+    expect(secondBatch.headers.etag).toBe(firstBatch.headers.etag)
   })
 
   it('serves a DSH 0.1.7 mobile application batch with document-relative plugin URLs', async () => {
@@ -1249,7 +1435,10 @@ describe('HTTP gateway', () => {
       protocol: 1,
       instanceId,
     })
-    await expect(udpDiscovery(instance.address().port)).resolves.toEqual({
+    const discovery = await udpDiscovery(instance.address().port).catch(error => {
+      throw new Error(`UDP discovery failed: ${JSON.stringify(instance.discoveryStatus())}`, { cause: error })
+    })
+    expect(discovery).toEqual({
       deviceName: expect.any(String),
       origin: instance.address().origin,
       port: instance.address().port,

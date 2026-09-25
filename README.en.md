@@ -31,14 +31,14 @@
 
 > DSH Mobile is a DeepSeek Harness community plugin; the native app supports Android only.
 >
-> **Current version: 0.4.6**. It supports DSH `0.1.7-rc.1`, improves remote diagnostics and mobile boot reliability, and adds existing-frps attachment with a self-signed HTTPS entry. [Release notes](CHANGELOG.md#046---2026-09-24).
+> **Current version: 0.4.7**. It supports DSH `0.1.7-rc.2`, avoids duplicate mobile boot downloads, and improves Android recovery, the phone-width sidebar, and input handling. [Release notes](CHANGELOG.md#047---2026-09-25).
 >
-> **Upgrade reminder**: update both the plugin and Android app to 0.4.6 when practical. Existing pairings remain intact. The self-signed FRP entry requires the 0.4.6 app; older apps can still use existing LAN and trusted-certificate remote connections. [Compatibility notes](#compatibility).
+> **Upgrade reminder**: update both the plugin and Android app to 0.4.7 when practical. Existing pairings remain intact. The self-signed FRP entry requires at least the 0.4.6 app; older apps can still use existing LAN and trusted-certificate remote connections. [Compatibility notes](#compatibility).
 
 <p align="center">
-  <a href="https://github.com/saya-ch/dsh-mobile/releases/download/v0.4.6/dsh-mobile-android-v0.4.6.apk"><img src="assets/brand/app-icon-rounded.svg" alt="DSH Mobile Android app icon" width="72" height="72"></a><br>
-  <a href="https://github.com/saya-ch/dsh-mobile/releases/download/v0.4.6/dsh-mobile-android-v0.4.6.apk"><strong>Download Android app 0.4.6</strong></a><br>
-  <sub><a href="https://github.com/saya-ch/dsh-mobile/releases/tag/v0.4.6">Release notes and checksums</a></sub>
+  <a href="https://github.com/saya-ch/dsh-mobile/releases/download/v0.4.7/dsh-mobile-android-v0.4.7.apk"><img src="assets/brand/app-icon-rounded.svg" alt="DSH Mobile Android app icon" width="72" height="72"></a><br>
+  <a href="https://github.com/saya-ch/dsh-mobile/releases/download/v0.4.7/dsh-mobile-android-v0.4.7.apk"><strong>Download Android app 0.4.7</strong></a><br>
+  <sub><a href="https://github.com/saya-ch/dsh-mobile/releases/tag/v0.4.7">Release notes and checksums</a></sub>
 </p>
 
 DSH Mobile is a DeepSeek Harness plugin that lets a mobile browser or the Android app connect over a protected LAN or an optional Tailscale Funnel, cpolar, cloudflared, self-hosted FRP, or own reverse-proxy remote path. Local and remote access keep the same sessions, Workspaces, messages, and tools while using separate switches and paired-device stores without modifying DeepSeek Harness source.
@@ -216,10 +216,22 @@ Compatibility and WebSocket rules:
 
 Proxied pages allow HTTP frames for compatibility with some community plugins; those pages are unencrypted and can be altered, and browsers may still block them as mixed content. Use HTTPS for sensitive work. The same warning appears at the top of the remote panel when it is opened over HTTPS.
 
-- Version 0.4.6 has been contract-checked and boot-tested against DSH `0.1.7-alpha.2` and `0.1.7-rc.1` (renderer-v2). The DSH page must expose the standard session, `main`/`panelInfo`, and `rightbar` slots; the community plugin must register its panel or sidebar content through DSH's standard entry points.
+- Version 0.4.7 has been contract-checked and boot-tested against DSH `0.1.7-alpha.2`, `0.1.7-rc.1`, and `0.1.7-rc.2` (renderer-v2). The DSH page must expose the standard session, `main`/`panelInfo`, and `rightbar` slots; the community plugin must register its panel or sidebar content through DSH's standard entry points.
 - The gateway allows first-party DSH WebSocket paths by default, including `/sidebar/ws/terminal`. Other paths used by community sidebar plugins are blocked by default and appear in Diagnostics; the `/sidebar/ws/agent-opens` and `/sidebar/ws/agent-terminals` paths in the image are examples that must be reviewed for the actual plugin.
 - In **Connection diagnostics → Third-party WebSocket paths**, select **Allow** only for an exact path you have verified. Query strings and fuzzy prefixes are rejected; **Allow all** is not recommended. Approved paths can be removed at any time, and the same policy applies to LAN and remote connections.
 - Approval only lets that path pass through the authenticated, same-origin DSH Mobile gateway. It does not open arbitrary TCP/UDP ports or bypass device pairing. If a community plugin still fails, check the path recorded by Diagnostics and approve one path at a time.
+
+If another remote-access plugin shows its own “not paired” page inside DSH Mobile, the two authorization systems are separate. Temporarily turn off the other plugin's remote access on the computer to check whether the Mobile path recovers; do not enter a DSH Mobile pairing key on that page. Excluding its client module below does not necessarily remove a request-rewriting script injected before client boot. See [#111](https://github.com/saya-ch/dsh-mobile/issues/111).
+
+Advanced users can reduce mobile startup traffic by adding exact package ids to `excludedClientModules` in the current profile's `mobile-access` plugin configuration, then restarting DSH. This changes only the dedicated mobile page served through the gateway; desktop and `?frontend=stock` pages are unaffected. If both packages are present in the current boot graph, this example removes document preview and its dependent “Open In…” feature:
+
+```yaml
+excludedClientModules:
+  - '@deepseek-ai/dsh-client-ui-sidebar-documentpreview'
+  - '@deepseek-ai/dsh-client-ui-open-in-app'
+```
+
+There is no default exclusion list. The plugin rejects unknown or boot-critical modules and modules still referenced through `inject` or `external` by retained entries. If a DSH or community-plugin update invalidates the selection, the mobile page returns `409 excluded_client_modules_invalid` with the conflicting module; the computer also warns so you can adjust or remove the option. Bundle sizes and dependencies change between DSH installations and versions; another user's savings are not a prediction for yours.
 
 <table>
   <tr>
@@ -304,6 +316,7 @@ On macOS, local network, self-hosted FRP, and the own reverse proxy work; the th
 
 | DSH Mobile plugin | Verified DeepSeek Harness version |
 | --- | --- |
+| `0.4.7` | `0.1.7-alpha.2`, `0.1.7-rc.1`, and `0.1.7-rc.2` (source contract, isolated pairing, and workspace baseline over WebSocket) |
 | `0.4.6` | `0.1.7-alpha.2` and `0.1.7-rc.1` (source contract, isolated pairing, and workspace baseline over WebSocket) |
 | `0.4.5` | `0.1.7-alpha.2` (source contract check, local and remote gateway integration) |
 | `0.4.4` | `0.1.6-alpha.2` (local source and renderer-v2 contract check) |
@@ -319,6 +332,8 @@ On macOS, local network, self-hosted FRP, and the own reverse proxy work; the th
 | `0.1.4`, `0.2.x` | `0.1.1-rc.2` |
 
 Existing apps (0.3.3 and later) do not need re-pairing. cpolar users should use app 0.3.15 or later because earlier apps may time out before a slow first load over the free route finishes; earlier apps also use a different status-bar strategy. The 0.4.0 app adds the multi-device list, startup behavior, and computer-side revocation status; older apps continue to connect to their saved single device. App 0.1.3 or earlier requires reinstalling and pairing again.
+
+GitHub Release APKs use a stable signing certificate, so an older official APK with the same signer can be upgraded in place while retaining pairings. A locally built Debug APK with a different signer cannot be overwritten by the official APK; plan to pair again when switching between them.
 
 ## Uninstall
 
@@ -346,11 +361,11 @@ npm ci
 npm run verify
 ```
 
-The real browser-startup smoke uses a temporary DSH home, OS-assigned loopback ports, and Chromium pairing. It neither reads an existing user profile nor sends a model request. CI tests both DSH `0.1.7-alpha.2` and `0.1.7-rc.1`; install the latter in a separate directory locally so it does not replace the plugin's development dependencies:
+The real browser-startup smoke uses a temporary DSH home, OS-assigned loopback ports, and Chromium pairing. It neither reads an existing user profile nor sends a model request. CI tests DSH `0.1.7-alpha.2`, `0.1.7-rc.1`, and `0.1.7-rc.2`; install rc.2 in a separate directory locally so it does not replace the plugin's development dependencies:
 
 ```powershell
 $dshMobileTestRuntime = Join-Path $env:TEMP 'dsh-mobile-test-runtime'
-npm install --prefix $dshMobileTestRuntime --no-save --package-lock=false @deepseek-ai/dsh@0.1.7-rc.1
+npm install --prefix $dshMobileTestRuntime --no-save --package-lock=false @deepseek-ai/dsh@0.1.7-rc.2
 $env:DSH_BOOT_SMOKE_BIN = Join-Path $dshMobileTestRuntime 'node_modules/@deepseek-ai/dsh/lib/bin.js'
 npx playwright install chromium --only-shell
 npm run smoke:dsh-boot
