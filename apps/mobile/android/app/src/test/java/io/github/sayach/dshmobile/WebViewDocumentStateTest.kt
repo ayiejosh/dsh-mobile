@@ -55,20 +55,41 @@ class WebViewDocumentStateTest {
 
     @Test
     fun aSurvivingPageIsKeptAfterCookieRenewal() {
-        assertTrue(renewedDocumentAction(4, 4, true, true, "true") == RenewedDocumentAction.KEEP)
+        assertTrue(mountedDshProbeResult("true"))
+        assertTrue(renewedDocumentAction(4, 4, true, true, true) == RenewedDocumentAction.KEEP)
     }
 
     @Test
     fun aFailedPageOrRendererIsReloadedAfterCookieRenewal() {
-        assertTrue(renewedDocumentAction(4, 4, true, true, "false") == RenewedDocumentAction.RELOAD)
-        assertTrue(renewedDocumentAction(4, 4, true, true, null) == RenewedDocumentAction.RELOAD)
+        assertFalse(mountedDshProbeResult("false"))
+        assertFalse(mountedDshProbeResult(null))
+        assertTrue(renewedDocumentAction(4, 4, true, true, false) == RenewedDocumentAction.RELOAD)
     }
 
     @Test
     fun aLateProbeCannotReplaceAnotherDeviceOrWebView() {
-        assertTrue(renewedDocumentAction(4, 5, true, true, "false") == RenewedDocumentAction.IGNORE)
-        assertTrue(renewedDocumentAction(4, 4, false, true, "false") == RenewedDocumentAction.IGNORE)
-        assertTrue(renewedDocumentAction(4, 4, true, false, "false") == RenewedDocumentAction.RELOAD)
+        assertTrue(renewedDocumentAction(4, 5, true, true, false) == RenewedDocumentAction.IGNORE)
+        assertTrue(renewedDocumentAction(4, 4, false, true, false) == RenewedDocumentAction.IGNORE)
+        assertTrue(renewedDocumentAction(4, 4, true, false, false) == RenewedDocumentAction.RELOAD)
+    }
+
+    @Test
+    fun completedHtmlWithFailedApplicationScriptCannotBePreservedOrLeftBlank() {
+        val document = WebViewDocumentState(origin)
+        document.started()
+        assertTrue(document.finished("https://dsh.example.com/", "https://dsh.example.com/"))
+        assertTrue(MOUNTED_DSH_PROBE.contains(".dshm-shell"))
+        val mounted = mountedDshProbeResult("false")
+
+        assertTrue(renewedDocumentAction(4, 4, true, true, mounted) == RenewedDocumentAction.RELOAD)
+        assertTrue(exhaustedRecoveryAction(4, 4, true, mounted) == ExhaustedRecoveryAction.SHOW_CONNECTIONS)
+    }
+
+    @Test
+    fun mountedPageKeepsRetryDialogButRendererLossMakesOldCallbacksInert() {
+        assertTrue(exhaustedRecoveryAction(4, 4, true, true) == ExhaustedRecoveryAction.KEEP_PAGE)
+        assertTrue(renewedDocumentAction(4, 5, false, true, true) == RenewedDocumentAction.IGNORE)
+        assertTrue(exhaustedRecoveryAction(4, 5, false, false) == ExhaustedRecoveryAction.IGNORE)
     }
 
     @Test

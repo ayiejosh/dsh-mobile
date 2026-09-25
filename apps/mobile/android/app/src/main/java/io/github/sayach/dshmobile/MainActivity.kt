@@ -1749,7 +1749,7 @@ class MainActivity : Activity() {
                 preserveWebView = webView,
             ) { disposition ->
                 if (disposition == RestoreFailureDisposition.RETRY_TRANSIENT) {
-                    if (!scheduleAutomaticRecovery() && webView == null && !isFinishing && !isDestroyed) showDeviceList()
+                    if (!scheduleAutomaticRecovery()) finishAutomaticRecoveryAfterRetryBudget { showDeviceList() }
                 } else {
                     cancelAutomaticRecovery()
                     if (!isFinishing && !isDestroyed) showDeviceList()
@@ -1769,7 +1769,7 @@ class MainActivity : Activity() {
         val generation = beginRestoreAttempt()
         restoreTrustedDevice(preferred, credential, mode, generation, preserveWebView = webView) { disposition ->
             if (disposition == RestoreFailureDisposition.RETRY_TRANSIENT) {
-                if (!scheduleAutomaticRecovery() && webView == null && !isFinishing && !isDestroyed) showConnectionCenter()
+                if (!scheduleAutomaticRecovery()) finishAutomaticRecoveryAfterRetryBudget { showConnectionCenter() }
             } else {
                 cancelAutomaticRecovery()
             }
@@ -1803,6 +1803,25 @@ class MainActivity : Activity() {
         recoveryHandler.removeCallbacksAndMessages(null)
         recoveryAttempt = 0
         recoveryScheduled = false
+    }
+
+    /** A mounted page can retain its retry dialog; an absent or failed page needs the native connection screen. */
+    private fun finishAutomaticRecoveryAfterRetryBudget(fallback: () -> Unit) {
+        if (isFinishing || isDestroyed) return
+        val candidate = webView
+        val origin = gatewayOrigin
+        if (candidate == null || origin == null) {
+            fallback()
+            return
+        }
+        val generation = restoreGeneration
+        probeMountedDshPage(candidate, origin) { mounted ->
+            if (isFinishing || isDestroyed) return@probeMountedDshPage
+            when (exhaustedRecoveryAction(generation, restoreGeneration, webView === candidate, mounted)) {
+                ExhaustedRecoveryAction.IGNORE, ExhaustedRecoveryAction.KEEP_PAGE -> Unit
+                ExhaustedRecoveryAction.SHOW_CONNECTIONS -> fallback()
+            }
+        }
     }
 
     private fun beginRestoreAttempt(): Int {
@@ -1931,7 +1950,30 @@ class MainActivity : Activity() {
         }
     }
 
-    /** Keep the existing page after cookie renewal only if its DSH JavaScript document survived. */
+    /** The dedicated React shell appears after DSH boot; HTML completion alone is not readiness. */
+    private fun probeMountedDshPage(candidate: WebView, origin: GatewayOrigin, complete: (Boolean) -> Unit) {
+        if (webView !== candidate || gatewayOrigin != origin || !isDshDocumentUrl(origin, candidate.url.orEmpty())) {
+            complete(false)
+            return
+        }
+        val completed = AtomicBoolean(false)
+        val timeout = Runnable { if (completed.compareAndSet(false, true)) complete(false) }
+        restoreUiHandler.postDelayed(timeout, LIVE_DOCUMENT_PROBE_TIMEOUT_MS)
+        runCatching {
+            candidate.evaluateJavascript(MOUNTED_DSH_PROBE) { result ->
+                if (!completed.compareAndSet(false, true)) return@evaluateJavascript
+                restoreUiHandler.removeCallbacks(timeout)
+                complete(mountedDshProbeResult(result))
+            }
+        }.onFailure {
+            if (completed.compareAndSet(false, true)) {
+                restoreUiHandler.removeCallbacks(timeout)
+                complete(false)
+            }
+        }
+    }
+
+    /** Keep the existing page after cookie renewal only if DSH is still mounted inside it. */
     private fun preserveLiveDocumentOrReload(
         candidate: WebView,
         origin: GatewayOrigin,
@@ -1939,50 +1981,39 @@ class MainActivity : Activity() {
         generation: Int,
     ) {
         val fallbackUrl = candidate.url?.takeIf { isDshDocumentUrl(origin, it) } ?: origin.serialized
-        val action = { result: String? ->
+        val action = { mounted: Boolean ->
             if (isFinishing || isDestroyed) RenewedDocumentAction.IGNORE
             else renewedDocumentAction(
                 generation,
                 restoreGeneration,
                 webView === candidate,
                 gatewayOrigin == origin,
-                result,
+                mounted,
             )
         }
         val reload = {
-            if (action(null) == RenewedDocumentAction.RELOAD) {
+            if (action(false) == RenewedDocumentAction.RELOAD) {
                 failureDialog?.dismiss()
                 showBrowser(origin, caCertificate, fallbackUrl)
             }
         }
-        if (action(null) == RenewedDocumentAction.IGNORE) return
+        if (action(false) == RenewedDocumentAction.IGNORE) return
         if (gatewayOrigin != origin) {
             reload()
             return
         }
-        val completed = AtomicBoolean(false)
-        val timeout = Runnable { if (completed.compareAndSet(false, true)) reload() }
-        restoreUiHandler.postDelayed(timeout, LIVE_DOCUMENT_PROBE_TIMEOUT_MS)
-        runCatching {
-            candidate.evaluateJavascript("window.__DSH_MOBILE_LIVE_DOCUMENT__ === true") { result ->
-                if (!completed.compareAndSet(false, true)) return@evaluateJavascript
-                restoreUiHandler.removeCallbacks(timeout)
-                when (action(result)) {
-                    RenewedDocumentAction.IGNORE -> Unit
-                    RenewedDocumentAction.KEEP -> failureDialog?.dismiss()
-                    RenewedDocumentAction.RELOAD -> reload()
-                }
-            }
-        }.onFailure {
-            if (completed.compareAndSet(false, true)) {
-                restoreUiHandler.removeCallbacks(timeout)
-                reload()
+        probeMountedDshPage(candidate, origin) { mounted ->
+            when (action(mounted)) {
+                RenewedDocumentAction.IGNORE -> Unit
+                RenewedDocumentAction.KEEP -> failureDialog?.dismiss()
+                RenewedDocumentAction.RELOAD -> reload()
             }
         }
     }
 
     private fun handleRendererGone(browser: WebView) {
         if (webView !== browser || isFinishing || isDestroyed) return
+        invalidateRestoreAttempts()
         val decision = rendererRecoveryDecision(rendererCrashTimes, SystemClock.elapsedRealtime())
         rendererCrashTimes = decision.recentCrashes
         destroyWebView(rendererGone = true)
@@ -2070,7 +2101,6 @@ class MainActivity : Activity() {
                     retryUrl = origin.serialized
                     CookieManager.getInstance().flush()
                     nativeBridge?.injectPage()
-                    browser.evaluateJavascript("window.__DSH_MOBILE_LIVE_DOCUMENT__ = true", null)
                 }
             },
         )

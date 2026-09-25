@@ -46,15 +46,33 @@ internal fun sameMainDocumentUrl(origin: GatewayOrigin, currentUrl: String, fini
 /** Ignore stale renewals; keep a live document, or rebuild an invalid one. */
 internal enum class RenewedDocumentAction { IGNORE, KEEP, RELOAD }
 
+/** The WebView JavaScript result is true only after the dedicated React shell mounts. */
+internal const val MOUNTED_DSH_PROBE = "document.querySelector('.dshm-shell') !== null"
+internal fun mountedDshProbeResult(result: String?): Boolean = result == "true"
+
 internal fun renewedDocumentAction(
     expectedGeneration: Int,
     currentGeneration: Int,
     sameWebView: Boolean,
     sameOrigin: Boolean,
-    probeResult: String?,
+    mounted: Boolean,
 ): RenewedDocumentAction = when {
     expectedGeneration != currentGeneration || !sameWebView -> RenewedDocumentAction.IGNORE
     !sameOrigin -> RenewedDocumentAction.RELOAD
-    probeResult == "true" -> RenewedDocumentAction.KEEP
+    mounted -> RenewedDocumentAction.KEEP
     else -> RenewedDocumentAction.RELOAD
+}
+
+/** An exhausted retry keeps only a mounted page; stale callbacks cannot change screens. */
+internal enum class ExhaustedRecoveryAction { IGNORE, KEEP_PAGE, SHOW_CONNECTIONS }
+
+internal fun exhaustedRecoveryAction(
+    expectedGeneration: Int,
+    currentGeneration: Int,
+    sameWebView: Boolean,
+    mounted: Boolean,
+): ExhaustedRecoveryAction = when {
+    expectedGeneration != currentGeneration || !sameWebView -> ExhaustedRecoveryAction.IGNORE
+    mounted -> ExhaustedRecoveryAction.KEEP_PAGE
+    else -> ExhaustedRecoveryAction.SHOW_CONNECTIONS
 }
