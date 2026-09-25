@@ -137,6 +137,52 @@ export function isMobileScrimOpen(
 }
 
 /**
+ * Query matching devices whose primary pointer cannot hover: the phones and
+ * tablets where focusing an editor raises a soft keyboard the user did not ask
+ * for. A desktop keeps stock behaviour because it has a real keyboard already.
+ */
+export const TOUCH_PRIMARY_QUERY = '(hover: none), (pointer: coarse)'
+
+/** The stock composer wrapper, which owns everything the phone adapter edits. */
+const COMPOSER_CARD_SELECTOR = '[data-composer-card]'
+
+/** The composer's editing host, whichever contenteditable flavour it boots with. */
+const COMPOSER_EDITOR_SELECTOR = `${COMPOSER_CARD_SELECTOR} [contenteditable="true"],${COMPOSER_CARD_SELECTOR} [contenteditable="plaintext-only"]`
+
+/** The composer's Add trigger, whose menu must open without summoning the IME. */
+const COMPOSER_COMMAND_TRIGGER_SELECTOR = 'button[aria-haspopup="listbox"]'
+
+/**
+ * Whether a focus target belongs to the composer, which owns its own keyboard
+ * decision and must never be blurred by a suppression window.
+ * @param target - the focus target, already narrowed to an element.
+ * @returns whether the target sits inside the composer card.
+ */
+export function isComposerOwnedFocus(target: Element | null): boolean {
+  return target !== null && target.closest(COMPOSER_CARD_SELECTOR) !== null
+}
+
+/**
+ * Decide how one pointer event changes the composer's soft keyboard.
+ *
+ * The Add button's own mousedown calls `keepDraftFocus`, which focuses the draft
+ * on purpose so the caret survives the menu; on a phone that focus is what
+ * raises the keyboard. `inputmode="none"` withholds the IME without moving focus
+ * or the caret, so the menu, the caret, and the draft all keep stock behaviour.
+ * @param target - the pointer target, already narrowed to an element.
+ * @param touchPrimary - whether the device's primary pointer cannot hover.
+ * @returns `withhold` for the Add trigger, `restore` for any other tap, and
+ * `ignore` where no soft keyboard exists to withhold.
+ */
+export function resolveComposerImePolicy(
+  target: Element | null,
+  touchPrimary: boolean,
+): 'ignore' | 'restore' | 'withhold' {
+  if (!touchPrimary || target === null) return 'ignore'
+  return target.closest(COMPOSER_COMMAND_TRIGGER_SELECTOR) === null ? 'restore' : 'withhold'
+}
+
+/**
  * Close the details drawer from its scrim, collapsing the DSH 0.1.5 right
  * Sidebar first when that optional service owns the visible content.
  */
@@ -443,10 +489,17 @@ function MobileAppFrame(props: MobileRootProps & {
   }, [sessionTitle])
 
   useEffect(() => {
+    const elementTarget = (target: EventTarget | null): Element | null =>
+      target instanceof Element ? target : null
     const suppressAutofocus = (event: FocusEvent): void => {
       if (performance.now() >= suppressKeyboardUntil.current) return
-      const target = event.target
-      if (target instanceof HTMLElement && (target.matches('input,textarea') || target.isContentEditable)) target.blur()
+      const target = elementTarget(event.target)
+      if (target === null) return
+      const editable = target instanceof HTMLElement && (target.matches('input,textarea') || target.isContentEditable)
+      // The composer is the field the user actually reached, so a suppression
+      // window must not blur it out from under them.
+      if (!editable || isComposerOwnedFocus(target)) return
+      target.blur()
     }
     const suppressBranchAutofocus = (event: MouseEvent): void => {
       if (!(event.target instanceof Element)) return
@@ -458,27 +511,35 @@ function MobileAppFrame(props: MobileRootProps & {
         if (active instanceof HTMLElement && (active.matches('input,textarea') || active.isContentEditable)) active.blur()
       }, 0)
     }
-    const suppressCommandAutofocus = (event: MouseEvent): void => {
-      if (!(event.target instanceof Element)) return
-      const commandButton = event.target.closest('button[aria-haspopup="listbox"]')
-      if (commandButton === null) return
-      // The native composer deliberately preserves editor focus on mousedown;
-      // mobile command menus should open without summoning the soft keyboard.
-      suppressKeyboardUntil.current = performance.now() + 700
-      event.preventDefault()
-      event.stopPropagation()
-      window.setTimeout(() => {
-        const active = document.activeElement
-        if (active instanceof HTMLElement && (active.matches('input,textarea') || active.isContentEditable)) active.blur()
-      }, 0)
+    // The native composer deliberately preserves editor focus when its Add menu
+    // opens, and on a phone that focus summons the soft keyboard. Withholding the
+    // IME leaves the focus, the caret, and the draft exactly as stock left them;
+    // any other tap restores the keyboard.
+    const applyComposerImePolicy = (event: PointerEvent): void => {
+      const policy = resolveComposerImePolicy(
+        elementTarget(event.target),
+        window.matchMedia(TOUCH_PRIMARY_QUERY).matches,
+      )
+      if (policy === 'ignore') return
+      for (const editor of document.querySelectorAll<HTMLElement>(COMPOSER_EDITOR_SELECTOR)) {
+        if (policy === 'withhold') editor.setAttribute('inputmode', 'none')
+        else if (editor.getAttribute('inputmode') === 'none') editor.removeAttribute('inputmode')
+      }
     }
     document.addEventListener('focusin', suppressAutofocus, true)
     document.addEventListener('click', suppressBranchAutofocus, true)
-    document.addEventListener('mousedown', suppressCommandAutofocus, true)
+    // A finger tap never fires mousedown on Android, and this has to land before
+    // the trigger's own focus, so it runs on capture for pointerdown.
+    document.addEventListener('pointerdown', applyComposerImePolicy, true)
     return () => {
       document.removeEventListener('focusin', suppressAutofocus, true)
       document.removeEventListener('click', suppressBranchAutofocus, true)
-      document.removeEventListener('mousedown', suppressCommandAutofocus, true)
+      document.removeEventListener('pointerdown', applyComposerImePolicy, true)
+      // A withheld editor outliving the surface would strand the composer without
+      // a keyboard for the rest of the session.
+      for (const editor of document.querySelectorAll<HTMLElement>(`${COMPOSER_CARD_SELECTOR} [inputmode="none"]`)) {
+        editor.removeAttribute('inputmode')
+      }
     }
   }, [])
 

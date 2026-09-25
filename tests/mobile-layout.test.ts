@@ -6,12 +6,15 @@ import { CSRF_COOKIE, CSRF_HEADER } from '../src/http-security.js'
 import {
   MOBILE_LAYOUT_MESSAGES,
   MOBILE_LAYOUT_STYLES,
+  TOUCH_PRIMARY_QUERY,
   WIDE_LAYOUT_MIN_WIDTH_PX,
   apply as applyMobileLayout,
   closeDetailsFromScrim,
+  isComposerOwnedFocus,
   isMobileScrimOpen,
   isSidebarRightControl,
   isWideViewportLayout,
+  resolveComposerImePolicy,
   resolveMobileLayoutLanguage,
   resolveMobileRightbarLayout,
 } from '../src/mobile-layout.js'
@@ -713,11 +716,17 @@ describe('dedicated mobile layout boot', () => {
     expect(MOBILE_LAYOUT_STYLES).toContain('.dshm-main{grid-area:1/1;position:relative;')
   })
 
-  it('opens the command menu without restoring focus to the mobile editor', () => {
+  it('opens the command menu without summoning the mobile soft keyboard', () => {
+    // The composer focuses its editor on purpose when the Add menu opens, so the
+    // phone withholds the IME instead of moving that focus: blurring it made the
+    // tap feel dead, and a mousedown-only listener never ran on a finger tap.
     const source = readFileSync(new URL('../src/mobile-layout.ts', import.meta.url), 'utf8')
-    expect(source).toContain("event.target.closest('button[aria-haspopup=\"listbox\"]')")
+    expect(source).toContain("document.addEventListener('pointerdown', applyComposerImePolicy, true)")
+    expect(source).toContain("document.removeEventListener('pointerdown', applyComposerImePolicy, true)")
+    expect(source).toContain("editor.setAttribute('inputmode', 'none')")
     expect(source).toContain("target.matches('input,textarea') || target.isContentEditable")
     expect(source).toContain("active.matches('input,textarea') || active.isContentEditable")
+    expect(source).not.toContain('suppressCommandAutofocus')
   })
 
   it('publishes the root panelInfo hook the official layout owns', () => {
@@ -969,5 +978,59 @@ describe('mobile boot batch chunking', () => {
     const merged = split.rows.find(row => row.url.startsWith('/mobile-access/mobile-boot/'))
     expect(merged?.entries).toEqual([layoutId])
     expect(split.rows.filter(row => row.url.startsWith('/plugins/')).map(row => row.entries[0])).toEqual(['a'])
+  })
+})
+
+/**
+ * Element stub whose `closest` answers the whole ancestor chain with one answer.
+ * @param found - whether the queried selector matches anywhere up the chain.
+ * @returns the stub, cast to the element the policy reads.
+ */
+function closestStub(found: boolean): Element {
+  return { closest: () => (found ? {} : null) } as unknown as Element
+}
+
+describe('composer soft-keyboard policy', () => {
+  it('withholds the IME for the Add trigger on a touch-primary device', () => {
+    expect(resolveComposerImePolicy(closestStub(true), true)).toBe('withhold')
+  })
+
+  it('restores the IME for every other tap on a touch-primary device', () => {
+    // The composer itself is the important case: reaching for the draft has to
+    // bring the keyboard back, or the withheld attribute would strand it.
+    expect(resolveComposerImePolicy(closestStub(false), true)).toBe('restore')
+  })
+
+  it('leaves a device with a real keyboard untouched', () => {
+    expect(resolveComposerImePolicy(closestStub(true), false)).toBe('ignore')
+    expect(resolveComposerImePolicy(closestStub(false), false)).toBe('ignore')
+  })
+
+  it('ignores a pointer event with no element target', () => {
+    expect(resolveComposerImePolicy(null, true)).toBe('ignore')
+    expect(resolveComposerImePolicy(null, false)).toBe('ignore')
+  })
+
+  it('treats only the composer as its own keyboard owner', () => {
+    expect(isComposerOwnedFocus(closestStub(true))).toBe(true)
+    expect(isComposerOwnedFocus(closestStub(false))).toBe(false)
+    expect(isComposerOwnedFocus(null)).toBe(false)
+  })
+
+  it('gates on the no-hover query rather than a viewport width', () => {
+    expect(TOUCH_PRIMARY_QUERY).toBe('(hover: none), (pointer: coarse)')
+  })
+
+  it('stops withholding the IME once the surface goes away', () => {
+    // A withheld editor outliving the surface would strand the composer without
+    // a keyboard for the rest of the session.
+    const source = readFileSync(new URL('../src/mobile-layout.ts', import.meta.url), 'utf8')
+    expect(source).toContain('`${COMPOSER_CARD_SELECTOR} [inputmode="none"]`')
+    expect(source).toContain("editor.removeAttribute('inputmode')")
+  })
+
+  it('never blurs the composer from a suppression window', () => {
+    const source = readFileSync(new URL('../src/mobile-layout.ts', import.meta.url), 'utf8')
+    expect(source).toContain('if (!editable || isComposerOwnedFocus(target)) return')
   })
 })
