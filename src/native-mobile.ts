@@ -310,6 +310,54 @@ export function drawerScrimVisible(sidebarCollapsed: boolean, overlayActive: boo
   return !sidebarCollapsed && overlayActive
 }
 
+interface SoftEnterContext {
+  readonly nativeState: { readonly imeVisible: boolean; readonly noHardwareKeyboard: boolean } | null | undefined
+  readonly editable: boolean
+  readonly activeSession: boolean
+  readonly commandMenuOpen: boolean
+  readonly recentlyComposing: boolean
+}
+
+/** Only a known on-screen keyboard in an active App composer may change Enter into a line break. */
+export function isSoftKeyboardEnterLineBreak(event: KeyboardEvent, context: SoftEnterContext): boolean {
+  if (context.nativeState?.imeVisible !== true || context.nativeState.noHardwareKeyboard !== true
+    || !context.editable || !context.activeSession || context.commandMenuOpen || context.recentlyComposing) return false
+  if (!event.isTrusted || event.key !== 'Enter' || event.isComposing || event.keyCode === 229 || event.repeat) return false
+  return !event.shiftKey && !event.altKey && !event.ctrlKey && !event.metaKey && !event.getModifierState('AltGraph')
+}
+
+/** Attach the App-only Enter translation while retaining DSH's original physical-key semantics. */
+export function bindComposerSoftEnter(editor: HTMLElement, context: () => Omit<SoftEnterContext, 'recentlyComposing'>): () => void {
+  let composing = false
+  let composingUntil = 0
+  const onCompositionStart = (): void => { composing = true }
+  const onCompositionEnd = (): void => { composing = false; composingUntil = performance.now() + 10 }
+  const onKeyDown = (event: KeyboardEvent): void => {
+    if (!isSoftKeyboardEnterLineBreak(event, {
+      ...context(),
+      recentlyComposing: composing || editor.hasAttribute('data-composer-composing') || performance.now() < composingUntil,
+    })) return
+    event.preventDefault()
+    event.stopImmediatePropagation()
+    editor.dispatchEvent(new KeyboardEvent('keydown', {
+      key: 'Enter',
+      code: 'Enter',
+      shiftKey: true,
+      bubbles: true,
+      cancelable: true,
+      composed: true,
+    }))
+  }
+  editor.addEventListener('compositionstart', onCompositionStart)
+  editor.addEventListener('compositionend', onCompositionEnd)
+  editor.addEventListener('keydown', onKeyDown, { capture: true })
+  return () => {
+    editor.removeEventListener('compositionstart', onCompositionStart)
+    editor.removeEventListener('compositionend', onCompositionEnd)
+    editor.removeEventListener('keydown', onKeyDown, { capture: true })
+  }
+}
+
 interface ComposerMediaOrigin {
   readonly generation: number
   readonly href: string
@@ -430,6 +478,9 @@ export function installNativeMobileSurface(): () => void {
   const canAcceptComposerDrop = (): boolean => preflightComposerImageDrop(document, [preflightFile])
   const mediaPickerAbortController = new AbortController()
   const browserPickerCleanups = new Set<() => void>()
+  let boundEnterEditor: HTMLElement | null = null
+  let boundEnterCard: HTMLElement | null = null
+  let disposeEnterBinding: (() => void) | undefined
   const sessionTokens = new WeakMap<Element, string>()
   let nextSessionToken = 0
   type MediaRequestContext = ComposerMediaOrigin & { readonly composer: Element | null; readonly sessionRoot: Element | null }
@@ -702,6 +753,21 @@ export function installNativeMobileSurface(): () => void {
     })
   }
   document.addEventListener('click', animateNavigation)
+  const syncComposerEnterNewline = (composerCard: HTMLElement | null): void => {
+    const editor = composerCard?.querySelector<HTMLElement>('[data-composer-input][contenteditable="true"]') ?? null
+    if (editor === boundEnterEditor && composerCard === boundEnterCard) return
+    disposeEnterBinding?.()
+    boundEnterEditor = editor
+    boundEnterCard = composerCard
+    disposeEnterBinding = editor === null || composerCard === null ? undefined : bindComposerSoftEnter(editor, () => ({
+      nativeState: window.__DSH_MOBILE_NATIVE__ === undefined ? null : window.__DSH_MOBILE_KEYBOARD_STATE__,
+      editable: editor.isConnected && editor.getAttribute('contenteditable') === 'true'
+        && editor.getAttribute('aria-disabled') !== 'true' && editor.getAttribute('aria-haspopup') !== 'menu'
+        && composerCard.getAttribute('aria-busy') !== 'true',
+      activeSession: currentSessionOrigin().sessionId !== null,
+      commandMenuOpen: composerCard.querySelector('[data-trigger-menu],button[aria-haspopup="listbox"][aria-expanded="true"]') !== null,
+    }))
+  }
   const syncMediaBinding = (composer: Element | null): void => {
     const previousComposer = boundComposer
     boundComposer = composer
@@ -727,6 +793,7 @@ export function installNativeMobileSurface(): () => void {
     const handle = frame === undefined ? undefined : firstByClassSuffix(frame, '_handle')
     markNativeMobileSettings(document)
     if (center === undefined) {
+      syncComposerEnterNewline(null)
       bindHistoryScroller(undefined)
       syncMediaBinding(null)
       setCameraActionDisabled(true, label('Apri prima una sessione', 'Open a session first', '请先打开会话'))
@@ -768,6 +835,7 @@ export function installNativeMobileSurface(): () => void {
       const composerCard = center.querySelector<HTMLElement>('[data-composer-card]')
       const composerRow = composerCard?.querySelector<HTMLElement>(':scope > [data-input-scroll]')?.nextElementSibling
       if (!(composerRow instanceof HTMLElement)) {
+        syncComposerEnterNewline(null)
         syncMediaBinding(null)
         setCameraActionDisabled(true, label('Apri prima una sessione', 'Open a session first', '请先打开会话'))
         cameraButton.remove()
@@ -780,6 +848,7 @@ export function installNativeMobileSurface(): () => void {
         if (composerTools !== undefined) {
           composerTools.dataset.dshMobileComposerTools = 'true'
           syncMediaBinding(composerCard ?? null)
+          syncComposerEnterNewline(composerCard ?? null)
           const composerInput = composerCard?.querySelector<HTMLTextAreaElement>('textarea')
           const composerEditor = composerCard?.querySelector<HTMLElement>('[contenteditable="true"],[contenteditable="plaintext-only"]')
           const composerBusy = composerCard?.getAttribute('aria-busy') === 'true'
@@ -799,7 +868,7 @@ export function installNativeMobileSurface(): () => void {
           const commandMenu = composerCard?.querySelector<HTMLElement>('[data-trigger-menu]') ?? null
           if (commandMenu !== null) placeCameraAction(commandMenu)
           else cameraButton.remove()
-        }
+        } else syncComposerEnterNewline(null)
         if (composerTrailing !== undefined && composerTrailing !== composerTools) {
           composerTrailing.dataset.dshMobileComposerTrailing = 'true'
           const modelTrigger = composerTrailing.querySelector<HTMLButtonElement>('button[aria-label^="选择模型"],button[aria-label^="Select model"],button[aria-label^="Seleziona modello"]')
@@ -863,6 +932,7 @@ export function installNativeMobileSurface(): () => void {
     mediaPickerAbortController.abort()
     restoreLanguageMarker()
     for (const cleanup of [...browserPickerCleanups]) cleanup()
+    disposeEnterBinding?.()
     observer.disconnect()
     overlayQuery.removeEventListener('change', schedule)
     document.removeEventListener('click', onBranchClick, true)

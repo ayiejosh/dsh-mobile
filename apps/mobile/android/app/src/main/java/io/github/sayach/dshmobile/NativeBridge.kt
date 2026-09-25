@@ -110,6 +110,8 @@ internal class NativeBridge(
     private val pickerGrantOwnership = TemporaryGrantOwnership<Uri>()
     @Volatile private var installed = false
     @Volatile private var preservingForConfiguration = false
+    private var keyboardState = NativeKeyboardState(false, false)
+    private var keyboardSubscriber: JavaScriptReplyProxy? = null
 
     init {
         restoreState(restoredState)
@@ -167,8 +169,9 @@ internal class NativeBridge(
         return true
     }
 
-    /** Update navigation state; origin enforcement itself comes from each message callback. */
+    /** A new page must subscribe again; the last insets state remains available for its first reply. */
     fun onTopLevelNavigation(url: String) {
+        keyboardSubscriber = null
         if (!GatewayUrlPolicy.isSameOrigin(origin, url)) return
     }
 
@@ -176,7 +179,30 @@ internal class NativeBridge(
     fun injectPage() {
         webView.post {
             if (!installed || !GatewayUrlPolicy.isSameOrigin(origin, webView.url ?: origin.serialized)) return@post
+            keyboardSubscriber = null
             runCatching { webView.evaluateJavascript(pageAdapterScript(), null) }
+        }
+    }
+
+    /** Publish only changed native keyboard state to the authenticated top-level page. */
+    fun updateKeyboardState(state: NativeKeyboardState) {
+        if (keyboardState == state) return
+        keyboardState = state
+        publishKeyboardState()
+    }
+
+    private fun publishKeyboardState() {
+        val subscriber = keyboardSubscriber ?: return
+        val state = keyboardState
+        val message = JSONObject().apply {
+            put("event", "keyboard.state")
+            put("imeVisible", state.imeVisible)
+            put("noHardwareKeyboard", state.noHardwareKeyboard)
+        }.toString()
+        webView.post {
+            if (installed && !preservingForConfiguration && keyboardSubscriber === subscriber) {
+                runCatching { subscriber.postMessage(message) }
+            }
         }
     }
 
@@ -249,6 +275,8 @@ internal class NativeBridge(
      */
     fun dispose(changingConfigurations: Boolean = false) {
         installed = false
+        keyboardSubscriber = null
+        keyboardState = NativeKeyboardState(false, false)
         // onSaveInstanceState transfers any camera path before config teardown;
         // therefore config disposal must never let this old Activity reclaim deletion.
         preservingForConfiguration = changingConfigurations
@@ -376,7 +404,7 @@ internal class NativeBridge(
             return
         }
         if (parsed.has("event")) {
-            handlePageEvent(parsed)
+            handlePageEvent(parsed, replyProxy)
             return
         }
 
@@ -443,8 +471,14 @@ internal class NativeBridge(
         }
     }
 
-    private fun handlePageEvent(message: JSONObject) {
+    private fun handlePageEvent(message: JSONObject, replyProxy: JavaScriptReplyProxy) {
         when (message.optString("event")) {
+            "keyboard.subscribe" -> activity.runOnUiThread {
+                if (installed && !preservingForConfiguration) {
+                    keyboardSubscriber = replyProxy
+                    publishKeyboardState()
+                }
+            }
             "page.scroll" -> {
                 val direction = message.optString("direction")
                 if (direction == "up" || direction == "down") {
@@ -1035,10 +1069,17 @@ internal class NativeBridge(
           if (!bridge || typeof bridge.postMessage !== 'function') return;
           const oldState = window.__DSH_MOBILE_NATIVE_STATE__;
           const pending = oldState && oldState.pending instanceof Map ? oldState.pending : new Map();
+          window.__DSH_MOBILE_KEYBOARD_STATE__ = null;
           const materialize = value => { if (!value || typeof value !== 'object' || typeof value.base64 !== 'string' || typeof value.name !== 'string') return value; try { const raw = atob(value.base64); const bytes = Uint8Array.from(raw, char => char.charCodeAt(0)); return new File([bytes], value.name, { type: value.type || 'application/octet-stream' }); } catch (_) { return value; } };
           const handleReply = event => {
             try {
               const response = JSON.parse(typeof event === 'string' ? event : event.data);
+              if (response.event === 'keyboard.state') {
+                if (typeof response.imeVisible === 'boolean' && typeof response.noHardwareKeyboard === 'boolean') {
+                  window.__DSH_MOBILE_KEYBOARD_STATE__ = { imeVisible: response.imeVisible, noHardwareKeyboard: response.noHardwareKeyboard };
+                }
+                return;
+              }
               const item = pending.get(response.requestId);
               if (!item) return;
               clearTimeout(item.timer);
@@ -1072,6 +1113,7 @@ internal class NativeBridge(
           let chromeFrame = 0;
           let lastChromeColor = '';
           const postEvent = message => { try { bridge.postMessage(JSON.stringify(Object.assign({ version: 1 }, message))); } catch (_) {} };
+          postEvent({ event: 'keyboard.subscribe' });
           const parseChromeColor = value => {
             if (!value || !document.documentElement) return null;
             const probe = document.createElement('span');

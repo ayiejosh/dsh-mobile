@@ -1,5 +1,6 @@
 package io.github.sayach.dshmobile
 
+import android.content.res.Configuration
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNull
@@ -11,6 +12,16 @@ import org.junit.rules.TemporaryFolder
 class NativeBridgePolicyTest {
     @get:Rule
     val temporaryFolder = TemporaryFolder()
+
+    @Test
+    fun softEnterGateRequiresInsetBackedImeAndNoPhysicalKeyboard() {
+        assertTrue(resolveNativeKeyboardState(320, Configuration.KEYBOARD_NOKEYS).permitsSoftEnterLineBreak)
+        assertFalse(resolveNativeKeyboardState(0, Configuration.KEYBOARD_NOKEYS).permitsSoftEnterLineBreak)
+        assertFalse(resolveNativeKeyboardState(-1, Configuration.KEYBOARD_NOKEYS).permitsSoftEnterLineBreak)
+        assertFalse(resolveNativeKeyboardState(320, Configuration.KEYBOARD_QWERTY).permitsSoftEnterLineBreak)
+        assertFalse(resolveNativeKeyboardState(320, Configuration.KEYBOARD_12KEY).permitsSoftEnterLineBreak)
+        assertFalse(resolveNativeKeyboardState(320, Configuration.KEYBOARD_UNDEFINED).permitsSoftEnterLineBreak)
+    }
 
     @Test
     fun requestLimitIsEnforcedInUtf8BytesAtTheExactBoundary() {
