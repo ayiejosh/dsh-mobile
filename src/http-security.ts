@@ -1,6 +1,6 @@
 import type { IncomingMessage, ServerResponse } from 'node:http'
 import { addressAllowed, isLoopbackAddress, RequestTrustPolicy } from './network.js'
-import { isLocalAdminHostname } from './local-admin-host.js'
+import { DESKTOP_ADMIN_HEADER, DESKTOP_ADMIN_MARKER, isLocalAdminHostname } from './local-admin-host.js'
 
 export const DEVICE_COOKIE = 'dsh_ma_device'
 export const SESSION_COOKIE = 'dsh_ma_session'
@@ -230,7 +230,11 @@ function localAuthority(header: string | undefined): { hostname: string; authori
 }
 
 /** Protect the inner management route from non-loopback and DNS-rebinding callers. */
-export function assertLocalAdminTrust(request: IncomingMessage, requireBrowserOrigin: boolean): void {
+export function assertLocalAdminTrust(
+  request: IncomingMessage,
+  requireBrowserOrigin: boolean,
+  authenticateDesktop: () => boolean = () => false,
+): void {
   if (request.socket.remoteAddress === undefined || !isLoopbackAddress(request.socket.remoteAddress)) {
     throw new HttpError(403, 'forbidden')
   }
@@ -252,10 +256,11 @@ export function assertLocalAdminTrust(request: IncomingMessage, requireBrowserOr
       throw new HttpError(403, 'forbidden')
     }
   }
-  // Mutating admin requests are browser-only. Fetch metadata is optional on
-  // older clients, so a missing Sec-Fetch-Site must not make a missing Origin
-  // acceptable; Origin is the stable CSRF signal across supported browsers.
-  if (requireBrowserOrigin && origin === undefined) {
+  // Desktop strips Origin and Sec-Fetch-Site before forwarding, but preserves
+  // this plugin's non-simple request header. An unrelated browser origin cannot
+  // send that header through CORS; a local process could already forge Origin.
+  const desktopForward = site === undefined && request.headers[DESKTOP_ADMIN_HEADER] === DESKTOP_ADMIN_MARKER
+  if (requireBrowserOrigin && origin === undefined && !(desktopForward && authenticateDesktop())) {
     throw new HttpError(403, 'forbidden')
   }
   if (requireBrowserOrigin && site !== undefined && site !== 'same-origin') {

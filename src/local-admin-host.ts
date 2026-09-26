@@ -1,5 +1,22 @@
 /** Browser-safe desktop-admin Host checks. Do not import Node APIs here. */
 
+export const DESKTOP_ADMIN_HEADER = 'x-dsh-mobile-desktop-admin'
+export const DESKTOP_ADMIN_MARKER = 'dsh-app://app'
+
+/** Add the forwarded Desktop marker only to this plugin's mutating admin requests. */
+export function localAdminRequestHeaders(
+  init: RequestInit | undefined,
+  location: Pick<Location, 'hostname' | 'protocol'>,
+): Headers {
+  const headers = new Headers(init?.headers)
+  if (!headers.has('content-type')) headers.set('content-type', 'application/json')
+  headers.delete(DESKTOP_ADMIN_HEADER)
+  if (init?.method?.toUpperCase() === 'POST' && location.protocol === 'dsh-app:' && location.hostname === 'app') {
+    headers.set(DESKTOP_ADMIN_HEADER, DESKTOP_ADMIN_MARKER)
+  }
+  return headers
+}
+
 function unwrapBrackets(hostname: string): string {
   return hostname.startsWith('[') && hostname.endsWith(']') ? hostname.slice(1, -1) : hostname
 }
@@ -48,15 +65,17 @@ export function isLocalAdminHostname(hostname: string): boolean {
 /**
  * Whether the current browser document should mount the desktop Mobile access
  * control. Dedicated Mobile HTTPS (the phone surface) stays native even when
- * the Host is a private LAN address.
+ * the Host is a private LAN address. DSH Desktop (dsh-app://app) has neither,
+ * so its protocol gated on the fixed hostname "app" counts too.
  */
 export function isDesktopAdminSurface(
   hostname: string,
   search = '',
   frontend?: string,
+  protocol = '',
 ): boolean {
   const query = search.startsWith('?') ? search.slice(1) : search
-  return isLocalAdminHostname(hostname)
+  return (protocol === 'dsh-app:' ? hostname === 'app' : (protocol === '' || protocol === 'http:' || protocol === 'https:') && isLocalAdminHostname(hostname))
     && frontend !== 'dedicated'
     && !new URLSearchParams(query).has('dsh-mobile-preview')
 }

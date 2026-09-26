@@ -19,7 +19,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest'
 import { parseGatewayConfig } from '../src/config.js'
 import { MobileAccessGateway } from '../src/gateway.js'
 import { BlockedUpgradePathLog } from '../src/websocket-paths.js'
-import { CSRF_HEADER, DEVICE_COOKIE, SESSION_COOKIE } from '../src/http-security.js'
+import { CSRF_COOKIE, CSRF_HEADER, DEVICE_COOKIE, SESSION_COOKIE } from '../src/http-security.js'
 import { MemoryDeviceStore } from '../src/storage.js'
 import { DSH_MOBILE_VERSION, MINIMUM_ANDROID_APP_VERSION } from '../src/version.js'
 import { createTestTlsChain } from './tls-fixtures.js'
@@ -777,17 +777,19 @@ describe('HTTP gateway', () => {
     expect(englishLogin.body).toContain('Reconnect this device')
   })
 
-  it('exposes the alpha.2 trusted HTTP carrier only on an authenticated dedicated page', async () => {
+  it('uses the authenticated HTTP carrier for dedicated-page uploads, but not stock pages', async () => {
     const inner = await upstream('remote-settings')
     const instance = await gateway(inner.port)
     const browser = { ...browserHeaders(instance), accept: 'text/html' }
     const anonymous = await request(instance.address().port, '/', { headers: browser })
     expect(anonymous.status).toBe(302)
     expect(anonymous.body).not.toContain('__DSH_TRANSPORT__')
+    expect(anonymous.body).not.toContain('__DSH_FILE_UPLOAD__')
     expect(inner.observations).toHaveLength(0)
     const login = await request(instance.address().port, '/mobile-access/login', { headers: browser })
     expect(login.status).toBe(200)
     expect(login.body).not.toContain('__DSH_TRANSPORT__')
+    expect(login.body).not.toContain('__DSH_FILE_UPLOAD__')
 
     const paired = await pair(instance)
     const headers = { ...browser, cookie: `${SESSION_COOKIE}=${paired.session}` }
@@ -795,10 +797,43 @@ describe('HTTP gateway', () => {
     expect(dedicated.status).toBe(200)
     expect(dedicated.body).toContain('window.__DSH_TRANSPORT__={fetch:')
     expect(dedicated.body).toContain('ownsHost:true')
+    expect(dedicated.body).toContain('window.__DSH_FILE_UPLOAD__={fetch:')
     expect(dedicated.body).toContain('window.__DSH_MOBILE_FRONTEND__="dedicated"')
+    const bootstrapStart = dedicated.body.indexOf('(()=>{if(window.__DSH_TRANSPORT__')
+    const bootstrapEnd = dedicated.body.indexOf('window.__DSH_MOBILE_FRONTEND__=', bootstrapStart)
+    expect(bootstrapStart).toBeGreaterThan(-1)
+    expect(bootstrapEnd).toBeGreaterThan(bootstrapStart)
+    const nativeFetch = vi.fn((input: RequestInfo | URL, init?: RequestInit) => {
+      const requestHeaders = new Headers(init?.headers)
+      requestHeaders.set('cookie', `${SESSION_COOKIE}=${paired.session}`)
+      requestHeaders.set('origin', instance.address().origin)
+      requestHeaders.set('sec-fetch-site', 'same-origin')
+      return fetch(new URL(String(input), instance.address().origin), { ...init, headers: requestHeaders })
+    })
+    const page: {
+      fetch: typeof fetch
+      __DSH_FILE_UPLOAD__?: { fetch: typeof fetch }
+    } = { fetch: nativeFetch }
+    const pageLocation = { href: `${instance.address().origin}/`, origin: instance.address().origin }
+    new Function('window', 'document', 'location', 'Request', 'Headers', 'URL', dedicated.body.slice(bootstrapStart, bootstrapEnd))(
+      page, { cookie: `${CSRF_COOKIE}=${paired.csrf}` }, pageLocation, Request, Headers, URL,
+    )
+    const uploadBody = new Blob(['%PDF-1.7\nmobile upload\n%%EOF\n'], { type: 'application/pdf' })
+    const upload = await page.__DSH_FILE_UPLOAD__?.fetch('/api/session/uploadFileBinary?sessionId=test', {
+      method: 'POST', headers: { 'content-type': 'application/octet-stream' }, body: uploadBody,
+    })
+    expect(upload?.status).toBe(200)
+    const forwarded = inner.observations.at(-1)
+    expect(forwarded?.url).toBe('/api/session/uploadFileBinary?sessionId=test')
+    expect(forwarded?.body).toBe('%PDF-1.7\nmobile upload\n%%EOF\n')
+    expect(forwarded?.headers['content-type']).toBe('application/octet-stream')
+    expect(forwarded?.headers.cookie).toBeUndefined()
+    expect(forwarded?.headers[CSRF_HEADER]).toBeUndefined()
+    expect(nativeFetch).toHaveBeenCalledOnce()
     const stock = await request(instance.address().port, '/?frontend=stock', { headers })
     expect(stock.status).toBe(200)
     expect(stock.body).not.toContain('__DSH_TRANSPORT__')
+    expect(stock.body).not.toContain('__DSH_FILE_UPLOAD__')
     expect(stock.body).not.toContain('__DSH_MOBILE_FRONTEND__')
   })
 

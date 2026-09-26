@@ -1,6 +1,7 @@
 import type { IncomingMessage, ServerResponse } from 'node:http'
 import { describe, expect, it } from 'vitest'
 import { HttpError, assertLocalAdminTrust, setSecurityHeaders } from '../src/http-security.js'
+import { DESKTOP_ADMIN_HEADER, DESKTOP_ADMIN_MARKER } from '../src/local-admin-host.js'
 
 const GATEWAY_POLICY = 'camera=(), microphone=(), geolocation=(), payment=(), usb=()'
 const PROXIED_POLICY = 'camera=(), microphone=(self), geolocation=(), payment=(), usb=()'
@@ -34,11 +35,13 @@ function fakeRequest(init: {
   readonly host?: string
   readonly origin?: string
   readonly site?: string
+  readonly desktopMarker?: string | readonly string[]
 }): IncomingMessage {
-  const headers: Record<string, string> = {}
+  const headers: Record<string, string | readonly string[]> = {}
   if (init.host !== undefined) headers.host = init.host
   if (init.origin !== undefined) headers.origin = init.origin
   if (init.site !== undefined) headers['sec-fetch-site'] = init.site
+  if (init.desktopMarker !== undefined) headers[DESKTOP_ADMIN_HEADER] = init.desktopMarker
   return {
     socket: {
       remoteAddress: Object.hasOwn(init, 'remoteAddress') ? init.remoteAddress : '127.0.0.1',
@@ -47,10 +50,10 @@ function fakeRequest(init: {
   } as IncomingMessage
 }
 
-function reject(init: Parameters<typeof fakeRequest>[0], requireOrigin = false): void {
-  expect(() => assertLocalAdminTrust(fakeRequest(init), requireOrigin)).toThrow(HttpError)
+function reject(init: Parameters<typeof fakeRequest>[0], requireOrigin = false, authenticateDesktop = () => false): void {
+  expect(() => assertLocalAdminTrust(fakeRequest(init), requireOrigin, authenticateDesktop)).toThrow(HttpError)
   try {
-    assertLocalAdminTrust(fakeRequest(init), requireOrigin)
+    assertLocalAdminTrust(fakeRequest(init), requireOrigin, authenticateDesktop)
   } catch (error) {
     expect(error).toMatchObject({ status: 403, code: 'forbidden' })
   }
@@ -139,7 +142,38 @@ describe('assertLocalAdminTrust', () => {
     }), true)).not.toThrow()
   })
 
-  it('rejects mutating requests with no Origin even when Fetch Metadata is absent', () => {
+  it('rejects a desktop-shell Origin without the forwarded request marker', () => {
+    reject({ host: '127.0.0.1:8080', origin: 'dsh-app://app' }, true)
+  })
+
+  it('accepts only marked Origin-less Desktop forwards on mutating requests', () => {
+    expect(() => assertLocalAdminTrust(fakeRequest({
+      host: '127.0.0.1:8080',
+      desktopMarker: DESKTOP_ADMIN_MARKER,
+    }), true, () => true)).not.toThrow()
+    reject({ host: '127.0.0.1:8080' }, true)
+    reject({ host: '127.0.0.1:8080', desktopMarker: DESKTOP_ADMIN_MARKER }, true)
+    reject({ host: '127.0.0.1:8080', desktopMarker: 'dsh-app://other' }, true)
+    reject({ host: '127.0.0.1:8080', desktopMarker: [DESKTOP_ADMIN_MARKER, DESKTOP_ADMIN_MARKER] }, true)
+  })
+
+  it('keeps the marker from overriding browser Origin, Fetch Metadata, TCP peer, or Host', () => {
+    reject({ host: '127.0.0.1:8080', desktopMarker: DESKTOP_ADMIN_MARKER, site: 'same-origin' }, true, () => true)
+    reject({ host: '127.0.0.1:8080', desktopMarker: DESKTOP_ADMIN_MARKER, site: 'cross-site' }, true, () => true)
+    reject({ host: '127.0.0.1:8080', desktopMarker: DESKTOP_ADMIN_MARKER, origin: 'http://evil.example' }, true, () => true)
+    reject({ host: '127.0.0.1:8080', desktopMarker: DESKTOP_ADMIN_MARKER, origin: 'dsh-app://app' }, true, () => true)
+    reject({ host: 'evil.example:8080', desktopMarker: DESKTOP_ADMIN_MARKER }, true, () => true)
+    reject({ remoteAddress: '192.168.50.23', host: '127.0.0.1:8080', desktopMarker: DESKTOP_ADMIN_MARKER }, true, () => true)
+  })
+
+  it('keeps an unmarked Origin-less and Fetch-Metadata-less POST forbidden', () => {
     reject({ host: '192.168.50.23:8080' }, true)
+  })
+
+  it('still rejects Origin-less mutating requests that carry Fetch Metadata', () => {
+    reject({
+      host: '192.168.50.23:8080',
+      site: 'same-origin',
+    }, true)
   })
 })
