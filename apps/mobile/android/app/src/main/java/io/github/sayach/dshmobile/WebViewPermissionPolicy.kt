@@ -21,6 +21,6 @@ internal object WebViewPermissionPolicy {
         resources: List<String>,
         requestOrigin: String?,
         trustedOrigin: GatewayOrigin,
-    ): Boolean = PermissionRequest.RESOURCE_AUDIO_CAPTURE in resources &&
+    ): Boolean = resources == listOf(PermissionRequest.RESOURCE_AUDIO_CAPTURE) &&
         GatewayOrigin.parse(requestOrigin ?: "") == trustedOrigin
 }

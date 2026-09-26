@@ -30,8 +30,8 @@ class WebViewPermissionPolicyTest {
             trusted,
         ))
         assertFalse(WebViewPermissionPolicy.shouldGrantAudioCapture(emptyList(), page, trusted))
-        // A page that asks for the camera and the microphone still receives the microphone.
-        assertTrue(WebViewPermissionPolicy.shouldGrantAudioCapture(
+        // Voice input must not turn a mixed camera/microphone request into a partial grant.
+        assertFalse(WebViewPermissionPolicy.shouldGrantAudioCapture(
             listOf(PermissionRequest.RESOURCE_VIDEO_CAPTURE) + audio,
             page,
             trusted,

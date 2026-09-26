@@ -64,6 +64,8 @@ Available actions are `files.pick`, `camera.capture`, `share`, `clipboard.read`,
 
 From 0.4.7, the app uses plain Enter for a new draft line only when an inset-backed on-screen keyboard is visible, Android reports no hardware keyboard, and an active session composer is focused. The Send button still submits a multiline draft. Floating keyboards, unknown state, older apps, and mobile browsers retain DSH's original Enter behavior; physical keyboards can still use Shift+Enter for a line break.
 
+Voice input uses the DSH page's `getUserMedia`, not the extension bridge. The Android app requests microphone permission on first use and grants only audio-only capture from the paired HTTPS Origin; camera and other Origins remain denied. Client plugins loaded into that page share its Origin, so use voice input only with plugins you trust.
+
 Computer-side extensions are separate: their `host.mjs` runs as trusted local Node.js code on the DSH host, while `mobile.js` calls its scoped actions and routes. The app bridge cannot edit or upload extension source files.
 
 The client validates the extension manifest and revisioned resource URLs. File changes trigger an authenticated server-sent event so the phone can refresh immediately; 45-second visible and 5-minute hidden polling remains a recovery fallback. Every UI activation is pinned to its Host, script, stylesheet, and asset generation. Failed Host staging keeps the current version; failed client activation closes that extension and retries instead of mixing generations.
