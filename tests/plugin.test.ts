@@ -1,13 +1,13 @@
 import { Context } from '@deepseek-ai/cordis'
 import type { WebRoute, WebServer } from '@deepseek-ai/dsh-host-webserver'
 import type { CommandDefinition } from '@deepseek-ai/dsh-commands'
-import { createServer, request as requestHttp } from 'node:http'
+import { createServer, request as requestHttp, type IncomingMessage } from 'node:http'
 import { lstat, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises'
 import type { AddressInfo } from 'node:net'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { generate } from 'selfsigned'
-import { afterEach, describe, expect, it } from 'vitest'
+import { afterEach, describe, expect, it, vi } from 'vitest'
 import { Config, parseGatewayConfig, type PluginConfig } from '../src/config.js'
 import { parseCidr, RequestTrustPolicy } from '../src/network.js'
 import { apply, inject, originGatewayConfig, remoteGatewayConfig, settleCleanupSteps, upstreamAuthenticatedUrl } from '../src/plugin.js'
@@ -15,6 +15,7 @@ import { parseOriginSettings } from '../src/origin-proxy-config.js'
 import { parseFrpSettings } from '../src/frp-config.js'
 import { ensureFrpIngressCertificate } from '../src/frp-ingress.js'
 import { DSH_MOBILE_VERSION, MINIMUM_ANDROID_APP_VERSION } from '../src/version.js'
+import { DESKTOP_ADMIN_HEADER, DESKTOP_ADMIN_MARKER } from '../src/local-admin-host.js'
 
 const contexts: Context[] = []
 const temporaryDirectories: string[] = []
@@ -30,6 +31,7 @@ async function invoke(
   path: string,
   body = '',
   hostHostname = '127.0.0.1',
+  requestHeaders?: Record<string, string>,
 ): Promise<{ status: number; body: string }> {
   const server = createServer((request, response) => { void route.handler(request, response) })
   await new Promise<void>(resolve => { server.listen(0, '127.0.0.1', resolve) })
@@ -48,11 +50,13 @@ async function invoke(
         headers: {
           host: authority,
           ...(method === 'POST' ? {
-            origin: `http://${authority}`,
-            'sec-fetch-site': 'same-origin',
             'content-type': 'application/json',
             'content-length': Buffer.byteLength(body),
           } : {}),
+          ...(requestHeaders ?? (method === 'POST' ? {
+            origin: `http://${authority}`,
+            'sec-fetch-site': 'same-origin',
+          } : {})),
         },
       }, (response) => {
         const chunks: Buffer[] = []
@@ -75,6 +79,7 @@ async function mount(
   initiallyEnabled = false,
   webServerPort = 3080,
   config: Partial<PluginConfig> = {},
+  requestRejection: (request: IncomingMessage) => 401 | 403 | undefined = () => 401,
 ): Promise<{ context: Context; route: WebRoute; command: CommandDefinition; upstreamBase: string | undefined; directory: string }> {
   const directory = await mkdtemp(join(tmpdir(), 'dsh-mobile-plugin-'))
   temporaryDirectories.push(directory)
@@ -101,6 +106,7 @@ async function mount(
       upstreamBase = baseUrl
       return `${baseUrl}/?token=test-launch-token`
     },
+    requestRejection,
   } as never)
   await context.plugin({ Config, inject, apply }, {
     listenPort: 0,
@@ -398,6 +404,25 @@ describe('stock DSH lifecycle', () => {
     const allowed = await invoke(mounted.route, 'GET', '/api/mobile-access/lan/control', '', '192.168.50.23')
     expect(allowed.status).toBe(200)
     expect(JSON.parse(allowed.body)).toMatchObject({ running: false })
+  })
+
+  it('requires an authenticated Host session for official Desktop Origin-less writes', async () => {
+    const requestRejection = vi.fn((request: IncomingMessage) => request.headers.cookie === 'dsh-session=valid' ? undefined : 401)
+    const mounted = await mount(false, 3080, {}, requestRejection)
+    const path = '/api/mobile-access/remote/provider'
+    const body = JSON.stringify({ provider: 'cpolar' })
+    const desktopHeaders = { [DESKTOP_ADMIN_HEADER]: DESKTOP_ADMIN_MARKER, cookie: 'dsh-session=valid' }
+
+    const unmarked = await invoke(mounted.route, 'POST', path, body, '127.0.0.1', { cookie: 'dsh-session=valid' })
+    expect(unmarked.status).toBe(403)
+    const unauthenticated = await invoke(mounted.route, 'POST', path, body, '127.0.0.1', { [DESKTOP_ADMIN_HEADER]: DESKTOP_ADMIN_MARKER })
+    expect(unauthenticated.status).toBe(403)
+    const browserMetadata = await invoke(mounted.route, 'POST', path, body, '127.0.0.1', { ...desktopHeaders, 'sec-fetch-site': 'same-origin' })
+    expect(browserMetadata.status).toBe(403)
+    const allowed = await invoke(mounted.route, 'POST', path, body, '127.0.0.1', desktopHeaders)
+    expect(allowed.status).toBe(200)
+    expect(JSON.parse(allowed.body)).toMatchObject({ provider: 'cpolar' })
+    expect(requestRejection).toHaveBeenCalledTimes(2)
   })
 
   it('rejects DNS-rebinding and public Host values on the desktop admin route', async () => {
