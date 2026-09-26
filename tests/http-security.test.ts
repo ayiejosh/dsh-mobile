@@ -1,7 +1,34 @@
-import type { IncomingMessage } from 'node:http'
+import type { IncomingMessage, ServerResponse } from 'node:http'
 import { describe, expect, it } from 'vitest'
-import { HttpError, assertLocalAdminTrust } from '../src/http-security.js'
+import { HttpError, assertLocalAdminTrust, setSecurityHeaders } from '../src/http-security.js'
 import { DESKTOP_ADMIN_HEADER, DESKTOP_ADMIN_MARKER } from '../src/local-admin-host.js'
+
+const GATEWAY_POLICY = 'camera=(), microphone=(), geolocation=(), payment=(), usb=()'
+const PROXIED_POLICY = 'camera=(), microphone=(self), geolocation=(), payment=(), usb=()'
+
+function fakeResponse(): { readonly headers: Record<string, string>; readonly response: ServerResponse } {
+  const headers: Record<string, string> = {}
+  const response = {
+    setHeader: (name: string, value: string) => {
+      headers[name] = value
+    },
+  } as unknown as ServerResponse
+  return { headers, response }
+}
+
+describe('setSecurityHeaders', () => {
+  it('keeps the microphone on the proxied GUI document alone', () => {
+    const gateway = fakeResponse()
+    setSecurityHeaders(gateway.response, false)
+    expect(gateway.headers['Permissions-Policy']).toBe(GATEWAY_POLICY)
+
+    const proxied = fakeResponse()
+    setSecurityHeaders(proxied.response, false, 'proxied')
+    // Voice input records through getUserMedia; `microphone=()` refuses it before any prompt.
+    expect(proxied.headers['Permissions-Policy']).toBe(PROXIED_POLICY)
+    expect(proxied.headers['Permissions-Policy']).toContain('camera=()')
+  })
+})
 
 function fakeRequest(init: {
   readonly remoteAddress?: string | undefined

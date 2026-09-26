@@ -126,6 +126,14 @@ class MainActivity : Activity() {
     private var restoredNativeBridgeState: Bundle? = null
     private var deferredBridgeResult: DeferredBridgeResult? = null
     private var deferredBridgePermission: IntArray? = null
+    /** WebView microphone request held while its system permission dialog is open. */
+    private data class PendingAudioPermission(
+        val request: PermissionRequest,
+        val owner: WebView,
+        val origin: GatewayOrigin,
+    )
+
+    private var pendingAudioPermission: PendingAudioPermission? = null
     private var gatewayOrigin: GatewayOrigin? = null
     private var accessMode = AccessMode.LAN
     private var setupBackAction: (() -> Unit)? = null
@@ -1602,6 +1610,21 @@ class MainActivity : Activity() {
                 if (grantResults.firstOrNull() == PackageManager.PERMISSION_GRANTED) startScanActivity()
                 else toastError(R.string.scan_camera_denied)
             }
+            VOICE_PERMISSION_REQUEST -> {
+                val pending = pendingAudioPermission
+                pendingAudioPermission = null
+                if (pending != null) {
+                    val currentPage = webView === pending.owner && gatewayOrigin == pending.origin &&
+                        GatewayUrlPolicy.isSameOrigin(pending.origin, pending.owner.url ?: "") && !isFinishing
+                    val granted = permissions.size == 1 && permissions[0] == Manifest.permission.RECORD_AUDIO &&
+                        grantResults.firstOrNull() == PackageManager.PERMISSION_GRANTED
+                    if (granted && currentPage) {
+                        pending.request.grant(arrayOf(PermissionRequest.RESOURCE_AUDIO_CAPTURE))
+                    } else {
+                        pending.request.deny()
+                    }
+                }
+            }
             else -> Unit
         }
     }
@@ -2097,7 +2120,10 @@ class MainActivity : Activity() {
             onBlocked = { toastError(R.string.blocked_navigation) },
             onFailure = ::showLoadFailure,
             onRendererGone = { handleRendererGone(browser) },
-            onTopLevelUrlChanged = { nativeBridge?.onTopLevelNavigation(it) },
+            onTopLevelUrlChanged = {
+                pendingAudioPermission = null
+                nativeBridge?.onTopLevelNavigation(it)
+            },
             onLoaded = {
                 if (webView === browser && gatewayOrigin == origin) {
                     retryUrl = origin.serialized
@@ -2116,7 +2142,33 @@ class MainActivity : Activity() {
             ): Boolean = showFileChooser(filePathCallback, fileChooserParams)
 
             override fun onPermissionRequest(request: PermissionRequest) {
-                request.deny()
+                // DSH's voice input records through getUserMedia, which only the
+                // paired page may do, and only once RECORD_AUDIO is held.
+                val allowed = WebViewPermissionPolicy.shouldGrantAudioCapture(
+                    request.resources.toList(),
+                    request.origin?.toString(),
+                    origin,
+                ) && webView === browser && gatewayOrigin == origin &&
+                    GatewayUrlPolicy.isSameOrigin(origin, browser.url ?: "") && !isFinishing
+                if (!allowed) {
+                    request.deny()
+                    return
+                }
+                if (pendingAudioPermission?.request === request) return
+                if (pendingAudioPermission != null) {
+                    request.deny()
+                    return
+                }
+                if (checkSelfPermission(Manifest.permission.RECORD_AUDIO) == PackageManager.PERMISSION_GRANTED) {
+                    request.grant(arrayOf(PermissionRequest.RESOURCE_AUDIO_CAPTURE))
+                    return
+                }
+                pendingAudioPermission = PendingAudioPermission(request, browser, origin)
+                requestPermissions(arrayOf(Manifest.permission.RECORD_AUDIO), VOICE_PERMISSION_REQUEST)
+            }
+
+            override fun onPermissionRequestCanceled(request: PermissionRequest) {
+                if (pendingAudioPermission?.request === request) pendingAudioPermission = null
             }
         }
         nativeBridge?.dispose()
@@ -2411,6 +2463,7 @@ class MainActivity : Activity() {
     private fun destroyWebView(changingConfigurations: Boolean = false, rendererGone: Boolean = false) {
         secureWebViewClient?.dispose()
         secureWebViewClient = null
+        pendingAudioPermission = null
         nativeBridge?.dispose(changingConfigurations)
         nativeBridge = null
         webView?.apply {
@@ -2570,6 +2623,7 @@ class MainActivity : Activity() {
         const val NEARBY_WIFI_REQUEST = 4104
         const val TASK_NOTIFICATION_PERMISSION_REQUEST = 4105
         const val SCAN_QR_REQUEST = 4106
+        const val VOICE_PERMISSION_REQUEST = 4107
         const val DEVICE_STATUS_REFRESH_MS = 20_000L
         const val DEVICE_UNDO_TIMEOUT_MS = 6_000L
         const val LIVE_DOCUMENT_PROBE_TIMEOUT_MS = 2_000L
