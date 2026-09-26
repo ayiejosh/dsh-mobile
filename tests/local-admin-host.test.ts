@@ -1,5 +1,11 @@
 import { describe, expect, it } from 'vitest'
-import { isDesktopAdminSurface, isLocalAdminHostname } from '../src/local-admin-host.js'
+import {
+  DESKTOP_ADMIN_HEADER,
+  DESKTOP_ADMIN_MARKER,
+  isDesktopAdminSurface,
+  isLocalAdminHostname,
+  localAdminRequestHeaders,
+} from '../src/local-admin-host.js'
 
 describe('desktop admin hostnames', () => {
   it.each([
@@ -67,5 +73,42 @@ describe('desktop admin surface', () => {
   it('rejects public and DNS-rebinding Host values', () => {
     expect(isDesktopAdminSurface('evil.example')).toBe(false)
     expect(isDesktopAdminSurface('8.8.8.8')).toBe(false)
+  })
+
+  it('treats the dsh-app desktop-shell protocol as the desktop admin surface', () => {
+    expect(isDesktopAdminSurface('app', '', undefined, 'dsh-app:')).toBe(true)
+    expect(isDesktopAdminSurface('app', '?dsh-mobile-preview', undefined, 'dsh-app:')).toBe(false)
+    expect(isDesktopAdminSurface('app', '', 'dedicated', 'dsh-app:')).toBe(false)
+  })
+
+  it('keeps non-shell hostnames protocol-gated', () => {
+    expect(isDesktopAdminSurface('evil.example', '', undefined, 'dsh-app:')).toBe(false)
+    expect(isDesktopAdminSurface('localhost', '', undefined, 'https:')).toBe(true)
+    expect(isDesktopAdminSurface('localhost', '', undefined, 'dsh-app:')).toBe(false)
+    expect(isDesktopAdminSurface('localhost', '', undefined, 'file:')).toBe(false)
+  })
+})
+
+describe('local admin request headers', () => {
+  it('marks only mutating requests from the exact official Desktop document', () => {
+    const headers = localAdminRequestHeaders({ method: 'POST' }, new URL('dsh-app://app/'))
+    expect(headers.get(DESKTOP_ADMIN_HEADER)).toBe(DESKTOP_ADMIN_MARKER)
+    expect(headers.get('content-type')).toBe('application/json')
+    for (const [method, url] of [
+      ['GET', 'dsh-app://app/'], ['POST', 'dsh-app://other/'],
+      ['POST', 'http://127.0.0.1:3080/'], ['POST', 'https://app/'],
+    ] as const) {
+      expect(localAdminRequestHeaders({ method }, new URL(url)).has(DESKTOP_ADMIN_HEADER)).toBe(false)
+    }
+  })
+
+  it('does not forward a caller-provided marker on other surfaces', () => {
+    const init = { method: 'POST', headers: new Headers({
+      [DESKTOP_ADMIN_HEADER]: DESKTOP_ADMIN_MARKER,
+      'content-type': 'application/problem+json',
+    }) }
+    const headers = localAdminRequestHeaders(init, new URL('http://127.0.0.1:3080/'))
+    expect(headers.has(DESKTOP_ADMIN_HEADER)).toBe(false)
+    expect(headers.get('content-type')).toBe('application/problem+json')
   })
 })

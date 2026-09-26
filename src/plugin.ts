@@ -13,6 +13,7 @@ declare module '@deepseek-ai/dsh-llm' {
 // `ctx.commands` and its handler types resolve without a runtime dependency.
 import type {} from '@deepseek-ai/dsh-commands'
 import type { WebRoute } from '@deepseek-ai/dsh-host-webserver'
+import type { IncomingMessage } from 'node:http'
 import { createRequire } from 'node:module'
 import { X509Certificate } from 'node:crypto'
 import { copyFile, lstat, readFile, rm } from 'node:fs/promises'
@@ -110,6 +111,7 @@ export async function settleCleanupSteps(steps: readonly (() => void | Promise<v
 
 interface BrowserAuthenticatedConnection {
   authenticatedUrl?: (baseUrl: string) => string
+  requestRejection?: (request: IncomingMessage) => 401 | 403 | undefined
 }
 
 /**
@@ -819,7 +821,10 @@ export async function apply(ctx: Context, config: PluginConfig): Promise<void> {
     handler: async (request, response) => {
       try {
         const target = parseRequestTarget(request.url)
-        assertLocalAdminTrust(request, request.method === 'POST')
+        assertLocalAdminTrust(request, request.method === 'POST', () => {
+          const connection = (ctx as Context & { readonly connection?: BrowserAuthenticatedConnection }).connection
+          return typeof connection?.requestRejection === 'function' && connection.requestRejection(request) === undefined
+        })
         if (target.search !== '') throw new HttpError(400, 'bad_request')
         const lanControl = target.decodedPathname === `${LOCAL_ADMIN_PREFIX}/control`
           || target.decodedPathname === `${LOCAL_ADMIN_PREFIX}/lan/control`
