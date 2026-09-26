@@ -166,6 +166,12 @@ async function checkAndroid() {
   if (!manifest.includes('android.permission.POST_NOTIFICATIONS')) {
     fail('Android manifest must declare POST_NOTIFICATIONS for task reminders')
   }
+  if (!manifest.includes('android.permission.RECORD_AUDIO')) {
+    fail('Android manifest must declare RECORD_AUDIO for in-app voice input')
+  }
+  for (const marker of ['WebViewPermissionPolicy.shouldGrantAudioCapture', 'VOICE_PERMISSION_REQUEST']) {
+    if (!mainActivity.includes(marker)) fail(`Android WebView microphone grant is missing ${marker}`)
+  }
   if (!qrDecoder.includes('MultiFormatReader') || !scanActivity.includes('QrDecoder.decodeNv21')) {
     fail('Android QR pairing must keep ZXing decoding wired to the scanner')
   }

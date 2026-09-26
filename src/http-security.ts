@@ -108,7 +108,12 @@ export function setSecurityHeaders(response: ServerResponse, tls: boolean, frami
     // cross-origin pages, which only an explicit frame-src admits.
     ...(proxied ? [PROXIED_FRAME_SRC] : []),
   ].join('; '))
-  response.setHeader('Permissions-Policy', 'camera=(), microphone=(), geolocation=(), payment=(), usb=()')
+  // The proxied GUI document owns local voice input: DSH's voice-input plugin
+  // records through `getUserMedia`, which a bare `microphone=()` refuses before
+  // any prompt. Only that document widens the microphone to itself; the
+  // gateway's own pages and every other feature stay refused.
+  const microphone = proxied ? 'microphone=(self)' : 'microphone=()'
+  response.setHeader('Permissions-Policy', `camera=(), ${microphone}, geolocation=(), payment=(), usb=()`)
   response.setHeader('Referrer-Policy', 'no-referrer')
   response.setHeader('X-Content-Type-Options', 'nosniff')
   // The legacy twin of frame-ancestors: SAMEORIGIN keeps older engines aligned
