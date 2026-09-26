@@ -1,6 +1,6 @@
 import { readFileSync } from 'node:fs'
 import { afterEach, describe, expect, it, vi } from 'vitest'
-import { applyNativeMobileLanguageMarker, bindComposerSoftEnter, dispatchComposerImageDrop, drawerScrimVisible, installNativeMobileSurface, isComposerMediaOriginCurrent, isSoftKeyboardEnterLineBreak, markNativeMobileSettings, NATIVE_MOBILE_OVERLAY_QUERY, NATIVE_MOBILE_STYLES, preflightComposerImageDrop, resolveNativeMobileFrame, resolveNativeMobileLanguage, shouldAutoLoadEarlier } from '../src/native-mobile.js'
+import { applyNativeMobileLanguageMarker, bindComposerSoftEnter, createHeaderStripPanController, dispatchComposerImageDrop, drawerScrimVisible, installNativeMobileSurface, isComposerMediaOriginCurrent, isSoftKeyboardEnterLineBreak, markNativeMobileSettings, NATIVE_MOBILE_OVERLAY_QUERY, NATIVE_MOBILE_STYLES, preflightComposerImageDrop, resolveNativeMobileFrame, resolveNativeMobileLanguage, shouldAutoLoadEarlier } from '../src/native-mobile.js'
 
 interface FakeElementOptions {
   readonly children?: readonly HTMLElement[]
@@ -61,7 +61,7 @@ describe('native mobile presentation', () => {
     // button in normal flow at the document's bottom-left, whose click still
     // collapsed the sidebar.
     const [neutral] = NATIVE_MOBILE_STYLES.split(`@media ${NATIVE_MOBILE_OVERLAY_QUERY}`)
-    expect(neutral).toContain('.dsh-native-mobile-backdrop,.dsh-mobile-branch-toast,.dsh-mobile-media-toast { display:none; }')
+    expect(neutral).toContain('.dsh-native-mobile-backdrop,.dsh-mobile-branch-toast,.dsh-mobile-media-toast,[data-dsh-mobile-header-pan] { display:none; }')
     expect(NATIVE_MOBILE_STYLES).toContain('.dsh-native-mobile-backdrop { display:block; position:fixed; z-index:235;')
     expect(NATIVE_MOBILE_STYLES).toContain('.dsh-mobile-branch-toast,.dsh-mobile-media-toast { display:block; position:fixed;')
     expect(NATIVE_MOBILE_STYLES).toContain('.dsh-native-mobile-backdrop[hidden] { display:none; }')
@@ -402,118 +402,139 @@ describe('composer soft-keyboard Enter', () => {
     expect(source).not.toContain('lineBreakButton')
   })
 })
+function headerPanHarness(initialRange = 220, reducedMotion = false) {
+  let range = initialRange
+  let now = 0
+  let rendered = 0
+  let nextFrame = 1
+  const frames = new Map<number, FrameRequestCallback>()
+  const pan = createHeaderStripPanController({
+    range: () => range,
+    render: offset => { rendered = offset },
+    now: () => now,
+    requestFrame: callback => { const id = nextFrame++; frames.set(id, callback); return id },
+    cancelFrame: id => { frames.delete(id) },
+    reducedMotion: () => reducedMotion,
+  })
+  return {
+    pan,
+    rendered: () => rendered,
+    frames,
+    setRange: (value: number) => { range = value },
+    setTime: (value: number) => { now = value },
+    step: (value: number) => {
+      now = value
+      const callbacks = [...frames.values()]
+      frames.clear()
+      for (const callback of callbacks) callback(value)
+    },
+  }
+}
+
 describe('header strip pan', () => {
-  it('reserves the horizontal gesture without taking vertical scrolling', () => {
-    // The strip is panned by a transform, so the browser must hand the horizontal gesture
-    // to the surface while keeping vertical page panning for itself.
-    expect(NATIVE_MOBILE_STYLES).toContain('.dshm-shell header { touch-action: pan-y; }')
+  it('keeps taps and vertical scrolls untouched while a horizontal touch crosses the threshold', () => {
+    const { pan, rendered } = headerPanHarness()
+    pan.start(200, 20, 0, 'touch')
+    expect(pan.move(195, 20, 8)).toBe(false)
+    expect(rendered()).toBe(0)
+    pan.end()
+    expect(pan.suppressClick(true, 1)).toBe(false)
+    pan.start(200, 20, 20, 'touch')
+    expect(pan.move(190, 40, 30)).toBe(false)
+    expect(pan.move(170, 40, 40)).toBe(false)
+    expect(rendered()).toBe(0)
+    pan.start(200, 20, 50, 'touch')
+    expect(pan.move(180, 22, 60)).toBe(true)
+    expect(rendered()).toBe(20)
   })
 
-  it('pans with a transform instead of a scroller', () => {
-    // A scroller is not usable here: `overflow` clips the popovers rendered inside the row,
-    // and lifting their containing block to escape the clip moves them off their trigger.
-    // Asserted from the built surface source so a later refactor cannot quietly swap the
-    // mechanism back for `overflow`.
-    const source = installNativeMobileSurface.toString()
-    expect(source).toContain('translateX(')
-    expect(source).toContain('scrollWidth - parts.row.clientWidth')
-    expect(source).toContain("parts.row.style.transform = value")
-    expect(source).toContain("parts.lead.style.transform = value")
-    expect(source).not.toContain('overflowX')
+  it('continues from touchmove after pointercancel and never doubles a duplicated sample', () => {
+    const { pan, rendered } = headerPanHarness()
+    pan.start(200, 20, 0, 'touch')
+    expect(pan.move(185, 20, 10)).toBe(true)
+    pan.pointerCancel()
+    expect(pan.move(120, 20, 30)).toBe(true)
+    expect(pan.move(120, 20, 30)).toBe(true)
+    expect(rendered()).toBe(80)
+    pan.end()
+    expect(pan.suppressClick(true, 1)).toBe(true)
   })
 
-  it('keeps a tap a tap and only pans past the threshold', () => {
-    const source = installNativeMobileSurface.toString()
-    expect(source).toContain('STRIP_DRAG_THRESHOLD_PX')
-    expect(source).toContain('if (!stripClaimed) {')
-    expect(source).toContain('const travelled = clientX - stripDrag.startX')
-    // A mouse drags to select text; only a finger pans.
-    expect(source).toContain('if (event.pointerType === "mouse") return')
+  it('abandons a cancelled pen drag without coasting or consuming a later tap', () => {
+    const { pan, frames } = headerPanHarness()
+    pan.start(200, 20, 0, 'pen')
+    pan.move(170, 20, 16)
+    pan.pointerCancel()
+    expect(pan.move(120, 20, 32)).toBe(false)
+    expect(frames.size).toBe(0)
   })
 
-  it('re-clamps the offset when the row content changes and releases it on dispose', () => {
-    // A new session or a job starting changes the range, and a stale offset would leave
-    // the chips parked off-screen with nothing to pan back.
-    const source = installNativeMobileSurface.toString()
-    expect(source).toContain('stripOffset = Math.min(stripOffset, stripRange())')
-    expect(source).toContain('document.removeEventListener("pointermove", onStripPointerMove, true)')
-    expect(source).toContain('stripOffset = 0')
+  it('does not consume a later unrelated tap, a keyboard click, or a click outside the header', () => {
+    const { pan, setTime } = headerPanHarness()
+    pan.start(200, 20, 0, 'touch')
+    pan.move(150, 20, 16)
+    pan.end()
+    expect(pan.suppressClick(true, 0)).toBe(false)
+    expect(pan.suppressClick(false, 1)).toBe(false)
+    expect(pan.suppressClick(true, 1)).toBe(false)
+    pan.start(200, 20, 40, 'touch')
+    pan.move(150, 20, 56)
+    pan.end()
+    pan.resetClickSuppression()
+    expect(pan.suppressClick(true, 1)).toBe(false)
+    pan.start(200, 20, 80, 'touch')
+    pan.move(150, 20, 96)
+    pan.end()
+    setTime(401)
+    expect(pan.suppressClick(true, 1)).toBe(false)
   })
 
-  it('does not open a chip that a drag happened to end on', () => {
-    const source = installNativeMobileSurface.toString()
-    expect(source).toContain('onStripClickCapture')
-    expect(source).toContain('if (!stripMoved) return')
-  })
-})
-
-describe('header strip coast', () => {
-  it('carries the strip on after the finger lifts', () => {
-    // A pan that stops dead under the finger reads as broken next to a real scroll, so a
-    // flick keeps its speed, decays, and settles — the decay is what ends it, because
-    // comparing offsets would stop the coast on any frame that landed on the same pixel.
-    const source = installNativeMobileSurface.toString()
-    expect(source).toContain('STRIP_COAST_FRICTION ** (elapsed / 16)')
-    expect(source).toContain('if (Math.abs(stripVelocity) < STRIP_COAST_MIN_VELOCITY_PX_PER_MS)')
-    expect(source).toContain('STRIP_COAST_MIN_VELOCITY_PX_PER_MS')
-  })
-
-  it('never cancels the frame and the flick speed in the same breath', () => {
-    // The first version cleared the speed inside the canceller, so the coast always read
-    // zero and the strip never moved. Cancelling must not touch the coast's input.
-    const source = installNativeMobileSurface.toString()
-    expect(source).toContain('const cancelStripCoast')
-    expect(source).not.toContain('stopStripCoast')
-    const cancel = source.slice(source.indexOf('const cancelStripCoast'), source.indexOf('const coastStrip'))
-    expect(cancel).not.toContain('stripVelocity =')
+  it('re-clamps after header changes and offers tap/keyboard routes to off-screen controls', () => {
+    const { pan, rendered, setRange } = headerPanHarness()
+    pan.advance(200)
+    expect(rendered()).toBe(140)
+    pan.reveal(300, 340, 40, 260)
+    expect(rendered()).toBe(220)
+    pan.advance(200)
+    expect(rendered()).toBe(0)
+    pan.advance(200)
+    setRange(20)
+    pan.sync()
+    expect(rendered()).toBe(20)
+    setRange(0)
+    pan.sync()
+    expect(rendered()).toBe(0)
   })
 
-  it('follows the flick direction instead of reversing it', () => {
-    const source = installNativeMobileSurface.toString()
-    expect(source).toContain('stripOffset + stripVelocity * elapsed')
+  it('coasts in flick direction but respects reduced motion and disposal', () => {
+    const fast = headerPanHarness()
+    fast.pan.start(200, 20, 0, 'touch')
+    fast.pan.move(150, 20, 16)
+    fast.pan.end()
+    expect(fast.frames.size).toBe(1)
+    fast.step(32)
+    expect(fast.rendered()).toBeGreaterThan(50)
+    fast.pan.dispose()
+    expect(fast.frames.size).toBe(0)
+    expect(fast.rendered()).toBe(0)
+    const reduced = headerPanHarness(220, true)
+    reduced.pan.start(200, 20, 0, 'touch')
+    reduced.pan.move(150, 20, 16)
+    reduced.pan.end()
+    expect(reduced.frames.size).toBe(0)
   })
 
-  it('advances by at least a millisecond and stops at an edge', () => {
+  it('keeps touch-action scoped to the actual phone header and exposes a 48px control', () => {
+    expect(NATIVE_MOBILE_STYLES).toContain('[data-dsh-mobile-header] :is([class*="_titleRow"],[class*="_headerLeading"]) { touch-action:pan-y; }')
+    expect(NATIVE_MOBILE_STYLES).not.toContain('.dshm-shell header { touch-action: pan-y; }')
+    expect(NATIVE_MOBILE_STYLES).toContain('.dsh-native-mobile-backdrop,.dsh-mobile-branch-toast,.dsh-mobile-media-toast,[data-dsh-mobile-header-pan] { display:none; }')
+    expect(NATIVE_MOBILE_STYLES).toContain('[data-dsh-mobile-header-pan] { box-sizing:border-box; grid-column:3; grid-row:1; display:flex; align-items:center; justify-content:center; width:48px; height:48px;')
     const source = installNativeMobileSurface.toString()
-    expect(source).toContain('Math.max(1, Math.min(64, now - previous))')
-    expect(source).toContain('if (stripOffset === range || stripOffset === 0)')
-  })
-
-  it('smoothes the samples so one jittery move cannot fling the strip', () => {
-    const source = installNativeMobileSurface.toString()
-    expect(source).toContain('STRIP_COAST_SMOOTHING')
-    expect(source).toContain('stripVelocity * (1 - STRIP_COAST_SMOOTHING)')
-  })
-})
-
-describe('header strip gesture sources', () => {
-  it('pans from the touch stream as well as the pointer stream', () => {
-    // A finger starting on a control — a chip trigger, an icon button — makes the browser
-    // take the gesture and fire pointercancel after the first move, while touchmove keeps
-    // arriving. Without the touch source the strip pans from the session title but not from
-    // any control beside it, which is exactly what the reporter saw.
-    const source = installNativeMobileSurface.toString()
-    expect(source).toContain('const onStripTouchMove')
-    // The listener is registered non-passive so the pan can preventDefault the scroll.
     expect(source).toContain('document.addEventListener("touchmove", onStripTouchMove')
-    expect(source).toContain('passive: false')
-    expect(source).toContain('document.addEventListener("touchend", onStripPointerUp, true)')
-    expect(source).toContain('document.addEventListener("touchcancel", onStripPointerUp, true)')
-    expect(source).toContain('document.removeEventListener("touchmove", onStripTouchMove')
-  })
-
-  it('derives the pan from the gesture origin so a double-reported move cannot double it', () => {
-    // The browser reports one movement as both a pointer and a touch event, so the pan is
-    // computed from the start rather than accumulated.
-    const source = installNativeMobileSurface.toString()
-    expect(source).toContain('const travelled = clientX - stripDrag.startX')
-    expect(source).toContain('stripDrag.startOffset - travelled')
-    expect(source).not.toContain('stripOffset -=')
-  })
-
-  it('lets a mostly vertical drag go so the page still scrolls', () => {
-    const source = installNativeMobileSurface.toString()
-    expect(source).toContain('const drift = clientY - stripDrag.startY')
-    expect(source).toContain('if (Math.abs(drift) > Math.abs(travelled))')
+    expect(source).toContain('document.addEventListener("pointercancel", onStripPointerCancel, true)')
+    expect(source).toContain('document.addEventListener("focusin", onStripFocus, true)')
+    expect(source).toContain('event.pointerType !== "touch" && event.pointerType !== "pen"')
+    expect(source).toContain('overlayQuery.matches && naturalRange > 1')
+    expect(source.indexOf('document.addEventListener("click", onStripClickCapture, true)')).toBeLessThan(source.indexOf('document.addEventListener("click", onBranchClick, true)'))
   })
 })

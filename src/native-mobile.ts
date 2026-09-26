@@ -11,9 +11,6 @@ export const NATIVE_MOBILE_OVERLAY_QUERY = '(max-width:720px)'
 
 /** Mobile feature and compatibility rules applied to DSH React surfaces. */
 export const NATIVE_MOBILE_STYLES = `
-/* The header strip is panned by a transform rather than scrolled, so the browser keeps
-vertical panning for the page and hands the horizontal gesture to the surface. */
-.dshm-shell header { touch-action: pan-y; }
 /* The surface appends chrome to <body> on every non-loopback page load, but
    every rule that gives that chrome a box lives inside the overlay query
    below. Outside the query the scrim kept the UA button box: an empty,
@@ -21,7 +18,7 @@ vertical panning for the page and hands the horizontal gesture to the surface. *
    still collapsed the sidebar. Keep the neutral state explicitly invisible —
    the query restores the fixed scrim, and its more specific [hidden] rule
    keeps winning there. */
- .dsh-native-mobile-backdrop,.dsh-mobile-branch-toast,.dsh-mobile-media-toast { display:none; }
+ .dsh-native-mobile-backdrop,.dsh-mobile-branch-toast,.dsh-mobile-media-toast,[data-dsh-mobile-header-pan] { display:none; }
  .dsh-mobile-settings_row { display:flex; align-items:center; gap:8px; padding:16px 0; border-bottom:0.5px solid var(--dsw-alias-border-l2); }
  .dsh-mobile-settings_rowText { flex:1; min-width:0; display:flex; flex-direction:column; gap:4px; padding-right:48px; }
  .dsh-mobile-settings_title { color:var(--dsw-alias-label-primary); font-size:14px; font-weight:400; line-height:22px; }
@@ -52,6 +49,14 @@ vertical panning for the page and hands the horizontal gesture to the surface. *
   [data-dsh-mobile-center] { grid-column:2 !important; width:100vw !important; min-width:0 !important; }
   [data-dsh-mobile-center] > * { min-width:0 !important; }
   [data-dsh-mobile-header] { box-sizing:border-box !important; width:calc(100% - 16px) !important; margin:0 8px !important; min-width:0; padding-top:max(4px,env(safe-area-inset-top)) !important; padding-right:8px !important; padding-left:42px !important; }
+  [data-dsh-mobile-header][data-dsh-mobile-pan-available="true"] { grid-template-columns:auto minmax(0,1fr) 48px !important; }
+  [data-dsh-mobile-header] :is([class*="_titleRow"],[class*="_headerLeading"]) { touch-action:pan-y; }
+  [data-dsh-mobile-header-pan] { box-sizing:border-box; grid-column:3; grid-row:1; display:flex; align-items:center; justify-content:center; width:48px; height:48px; padding:0; border:0; border-radius:12px; background:transparent; color:var(--dsw-alias-label-primary); cursor:pointer; touch-action:manipulation; }
+  [data-dsh-mobile-header-pan][hidden] { display:none !important; }
+  [data-dsh-mobile-header-pan]:active { background:var(--dsw-alias-interactive-bg-active,var(--dsw-alias-interactive-bg-hover)); }
+  [data-dsh-mobile-header-pan]:focus-visible { outline:2px solid var(--dsw-alias-state-business-primary,#4c82f7); outline-offset:1px; }
+  [data-dsh-mobile-header-pan] svg { width:18px; height:18px; }
+  [data-dsh-mobile-header-pan][data-at-end="true"] svg { transform:rotate(180deg); }
   [data-dsh-mobile-header] [class*="_titleRow"] { box-sizing:border-box !important; display:flex !important; align-items:center !important; min-width:0; min-height:32px !important; height:32px !important; gap:6px !important; padding:0 6px !important; }
   [data-dsh-mobile-header] [class*="_titleCluster"] { min-width:0; }
   [data-dsh-mobile-header] [class*="_crumbs"] { min-width:0; overflow:hidden; }
@@ -254,6 +259,127 @@ const STRIP_COAST_SMOOTHING = 0.35
 
 /** Per-16ms share of the flick speed kept while the strip coasts to a stop. */
 const STRIP_COAST_FRICTION = 0.92
+
+/** Pan state shared by pointer and touch streams so pointercancel does not end an active touch. */
+export function createHeaderStripPanController(options: {
+  readonly range: () => number
+  readonly render: (offset: number) => void
+  readonly now: () => number
+  readonly requestFrame: (callback: FrameRequestCallback) => number
+  readonly cancelFrame: (id: number) => void
+  readonly reducedMotion: () => boolean
+}): {
+  readonly offset: () => number
+  readonly start: (x: number, y: number, at: number, source: 'touch' | 'pen') => void
+  readonly move: (x: number, y: number, at: number) => boolean
+  readonly pointerCancel: () => void
+  readonly end: () => void
+  readonly cancel: () => void
+  readonly sync: () => void
+  readonly advance: (width: number) => void
+  readonly reveal: (left: number, right: number, visibleLeft: number, visibleRight: number) => void
+  readonly resetClickSuppression: () => void
+  readonly suppressClick: (inHeader: boolean, detail: number) => boolean
+  readonly dispose: () => void
+} {
+  let offset = 0
+  let drag: {
+    readonly x: number; readonly y: number; readonly offset: number; readonly source: 'touch' | 'pen'
+    lastX: number; lastAt: number; velocity: number; claimed: boolean
+  } | undefined
+  let frame = 0
+  let suppressUntil = 0
+  const clamp = (value: number): number => Math.min(Math.max(0, options.range()), Math.max(0, value))
+  const setOffset = (value: number): void => {
+    const next = clamp(value)
+    if (next === offset) return
+    offset = next
+    options.render(offset)
+  }
+  const stopCoast = (): void => {
+    if (frame !== 0) options.cancelFrame(frame)
+    frame = 0
+  }
+  const coast = (velocity: number): void => {
+    if (options.reducedMotion() || Math.abs(velocity) < STRIP_COAST_MIN_VELOCITY_PX_PER_MS) return
+    let previous = options.now()
+    const step = (now: number): void => {
+      const elapsed = Math.max(1, Math.min(64, now - previous))
+      previous = now
+      velocity *= STRIP_COAST_FRICTION ** (elapsed / 16)
+      if (Math.abs(velocity) < STRIP_COAST_MIN_VELOCITY_PX_PER_MS) { frame = 0; return }
+      const before = offset
+      setOffset(offset + velocity * elapsed)
+      if (offset === before || offset === 0 || offset === options.range()) { frame = 0; return }
+      frame = options.requestFrame(step)
+    }
+    frame = options.requestFrame(step)
+  }
+  const end = (): void => {
+    if (drag === undefined) return
+    const completed = drag
+    drag = undefined
+    if (completed.claimed) {
+      suppressUntil = options.now() + 400
+      coast(completed.velocity)
+    }
+  }
+  const cancel = (): void => {
+    if (drag?.claimed) suppressUntil = options.now() + 400
+    drag = undefined
+  }
+  return {
+    offset: () => offset,
+    start: (x, y, at, source) => {
+      stopCoast()
+      drag = { x, y, offset, source, lastX: x, lastAt: at, velocity: 0, claimed: false }
+      suppressUntil = 0
+    },
+    move: (x, y, at) => {
+      if (drag === undefined) return false
+      const travel = x - drag.x
+      if (!drag.claimed) {
+        const drift = y - drag.y
+        if (Math.abs(travel) < STRIP_DRAG_THRESHOLD_PX && Math.abs(drift) < STRIP_DRAG_THRESHOLD_PX) return false
+        if (Math.abs(drift) > Math.abs(travel)) { drag = undefined; return false }
+        drag.claimed = true
+      }
+      setOffset(drag.offset - travel)
+      if (at > drag.lastAt && x !== drag.lastX) {
+        drag.velocity = drag.velocity * (1 - STRIP_COAST_SMOOTHING)
+          + ((drag.lastX - x) / (at - drag.lastAt)) * STRIP_COAST_SMOOTHING
+        drag.lastX = x
+        drag.lastAt = at
+      }
+      return true
+    },
+    pointerCancel: () => { if (drag?.source === 'pen') cancel() },
+    end,
+    cancel,
+    sync: () => {
+      if (options.range() === 0) { stopCoast(); drag = undefined; suppressUntil = 0 }
+      setOffset(offset)
+    },
+    advance: width => {
+      stopCoast()
+      const range = options.range()
+      setOffset(offset >= range - 1 ? 0 : offset + Math.max(80, width * 0.7))
+    },
+    reveal: (left, right, visibleLeft, visibleRight) => {
+      stopCoast()
+      if (left < visibleLeft) setOffset(offset - (visibleLeft - left))
+      else if (right > visibleRight) setOffset(offset + right - visibleRight)
+    },
+    resetClickSuppression: () => { suppressUntil = 0 },
+    suppressClick: (inHeader, detail) => {
+      if (suppressUntil === 0 || detail === 0) return false
+      const suppress = inHeader && options.now() <= suppressUntil
+      suppressUntil = 0
+      return suppress
+    },
+    dispose: () => { stopCoast(); drag = undefined; suppressUntil = 0; setOffset(0) },
+  }
+}
 
 export type NativeMobileLanguage = 'it' | 'en' | 'zh'
 
@@ -699,174 +825,157 @@ export function installNativeMobileSurface(): () => void {
     if (branch === null || branch.hasAttribute('disabled') || branch.getAttribute('aria-disabled') === 'true') return
     window.setTimeout(showBranchToast, 80)
   }
-  document.addEventListener('click', onBranchClick, true)
-  // --- header strip pan ---------------------------------------------------
-  // The stock header row cannot shrink its groups, so on a phone the trailing controls sit
-  // outside the viewport and nothing brings them in. A scroller is not usable: `overflow`
-  // clips the popovers rendered inside the row, and lifting their containing block to escape
-  // the clip moves them off their trigger — measured, the jobs menu opened anchored to the
-  // header's left edge instead of under its own pill. A transform clips nothing and carries
-  // the popovers with the strip, so the gesture and the popovers both keep working.
-  let stripOffset = 0
-  let stripDrag: { readonly startX: number; readonly startY: number; readonly startOffset: number } | undefined
-  let stripClaimed = false
-  let stripMoved = false
-  let stripFrame = 0
-  let stripVelocity = 0
-  let stripSampleX = 0
-  let stripSampleAt = 0
+  // The title row's popovers must travel with their triggers, so pan with a transform
+  // instead of an overflow scroller. An adjacent button exposes the same controls by tap.
+  const panButton = document.createElement('button')
+  panButton.type = 'button'
+  panButton.dataset.dshMobileHeaderPan = 'true'
+  panButton.hidden = true
+  const panIcon = document.createElementNS('http://www.w3.org/2000/svg', 'svg')
+  panIcon.setAttribute('viewBox', '0 0 16 16')
+  panIcon.setAttribute('aria-hidden', 'true')
+  const panPath = document.createElementNS('http://www.w3.org/2000/svg', 'path')
+  panPath.setAttribute('d', 'M6 3.5 10.5 8 6 12.5')
+  panPath.setAttribute('fill', 'none')
+  panPath.setAttribute('stroke', 'currentColor')
+  panPath.setAttribute('stroke-width', '1.8')
+  panPath.setAttribute('stroke-linecap', 'round')
+  panPath.setAttribute('stroke-linejoin', 'round')
+  panIcon.append(panPath)
+  panButton.append(panIcon)
+  let stripHeader: HTMLElement | undefined
   const stripParts = (): { readonly row: HTMLElement; readonly lead: HTMLElement | undefined } | undefined => {
-    const row = document.querySelector<HTMLElement>('[class*="_titleRow"]')
-    if (row === null) return undefined
-    return { row, lead: document.querySelector<HTMLElement>('[class*="_headerLeading"]') ?? undefined }
+    const row = stripHeader?.querySelector<HTMLElement>('[class*="_titleRow"]')
+    if (row === undefined || row === null) return undefined
+    return { row, lead: stripHeader?.querySelector<HTMLElement>('[class*="_headerLeading"]') ?? undefined }
   }
-  /** Overflow the strip can travel, in CSS pixels; zero when it already fits. */
   const stripRange = (): number => {
     const parts = stripParts()
-    if (parts === undefined) return 0
-    return Math.max(0, parts.row.scrollWidth - parts.row.clientWidth)
+    if (!overlayQuery.matches || parts === undefined) return 0
+    const overflow = parts.row.scrollWidth - parts.row.clientWidth
+    return overflow > 1 ? overflow : 0
   }
-  const applyStrip = (): void => {
+  const updatePanButton = (offset: number): void => {
+    const range = stripRange()
+    const atEnd = range > 0 && offset >= range - 1
+    panButton.dataset.atEnd = String(atEnd)
+    const text = atEnd
+      ? label('Torna all’inizio della barra', 'Return to start of header', '返回标题栏开头')
+      : label('Altre azioni della barra', 'More header actions', '查看更多标题栏操作')
+    if (panButton.getAttribute('aria-label') !== text) panButton.setAttribute('aria-label', text)
+    if (panButton.title !== text) panButton.title = text
+  }
+  const applyStrip = (offset: number): void => {
     const parts = stripParts()
     if (parts === undefined) return
-    const value = stripOffset === 0 ? '' : `translateX(${-stripOffset}px)`
-    parts.row.style.transform = value
-    // The leading chip is its own grid column, so it has to travel with the row or the
-    // panned chips would slide underneath it.
-    if (parts.lead !== undefined) parts.lead.style.transform = value
+    const value = offset === 0 ? '' : `translateX(${-offset}px)`
+    if (parts.row.style.transform !== value) parts.row.style.transform = value
+    if (parts.lead !== undefined && parts.lead.style.transform !== value) parts.lead.style.transform = value
+    updatePanButton(offset)
   }
-  // Cancelling the frame must not touch the flick speed: it is the coast's input, and
-  // clearing it here would zero the speed before the coast ever reads it.
-  const cancelStripCoast = (): void => {
-    if (stripFrame !== 0) window.cancelAnimationFrame(stripFrame)
-    stripFrame = 0
-  }
-  /**
-   * Carry the strip on after the finger lifts. Without this the strip stops dead under the
-   * finger, which is what makes a pan feel broken next to a real scroll.
-   */
-  const coastStrip = (): void => {
-    cancelStripCoast()
-    if (Math.abs(stripVelocity) < STRIP_COAST_MIN_VELOCITY_PX_PER_MS) {
-      stripVelocity = 0
-      return
+  const pan = createHeaderStripPanController({
+    range: stripRange,
+    render: applyStrip,
+    now: () => performance.now(),
+    requestFrame: callback => window.requestAnimationFrame(callback),
+    cancelFrame: id => window.cancelAnimationFrame(id),
+    reducedMotion: () => window.matchMedia('(prefers-reduced-motion: reduce)').matches,
+  })
+  const syncPanButton = (header: HTMLElement | undefined): void => {
+    if (header !== stripHeader) {
+      pan.dispose()
+      stripHeader?.removeAttribute('data-dsh-mobile-pan-available')
+      stripHeader = header
     }
-    let previous = performance.now()
-    const step = (now: number): void => {
-      // A frame can arrive in the same millisecond as the last one; a zero elapsed time
-      // would freeze the coast, so the step always advances by at least a millisecond.
-      const elapsed = Math.max(1, Math.min(64, now - previous))
-      previous = now
-      stripVelocity *= STRIP_COAST_FRICTION ** (elapsed / 16)
-      // Decay is what ends the coast; comparing positions instead would stop it on any
-      // frame that happened to land on the same offset.
-      if (Math.abs(stripVelocity) < STRIP_COAST_MIN_VELOCITY_PX_PER_MS) {
-        cancelStripCoast()
-        stripVelocity = 0
-        return
-      }
-      const range = stripRange()
-      // stripVelocity is positive when the finger was travelling left, which is the
-      // direction the strip has to keep going.
-      stripOffset = Math.min(range, Math.max(0, stripOffset + stripVelocity * elapsed))
-      applyStrip()
-      // Hitting either end ends the coast; the strip does not bounce.
-      if (stripOffset === range || stripOffset === 0) {
-        cancelStripCoast()
-        stripVelocity = 0
-        return
-      }
-      stripFrame = window.requestAnimationFrame(step)
-    }
-    stripFrame = window.requestAnimationFrame(step)
+    if (header === undefined) { panButton.remove(); pan.sync(); return }
+    if (panButton.parentElement !== header) header.append(panButton)
+    const parts = stripParts()
+    const naturalRange = parts === undefined ? 0 : parts.row.scrollWidth - parts.row.clientWidth - (panButton.hidden ? 0 : 48)
+    const available = overlayQuery.matches && naturalRange > 1
+    if (panButton.hidden === available) panButton.hidden = !available
+    if (header.dataset.dshMobilePanAvailable !== String(available)) header.dataset.dshMobilePanAvailable = String(available)
+    pan.sync()
+    applyStrip(pan.offset())
   }
-  /**
-   * Move the strip to follow a finger.
-   *
-   * The position is derived from the gesture's origin rather than accumulated, so a browser
-   * that reports the same point twice — which it does when it delivers both a pointer and a
-   * touch event for one movement — cannot double the pan.
-   * @param clientX - current finger position.
-   * @param clientY - current finger position.
-   * @returns whether the strip now owns the gesture.
-   */
-  const panStripTo = (clientX: number, clientY: number): boolean => {
-    if (stripDrag === undefined) return false
-    const travelled = clientX - stripDrag.startX
-    if (!stripClaimed) {
-      const drift = clientY - stripDrag.startY
-      // Below the threshold it is still a tap; a mostly vertical drag is a page scroll and
-      // the strip lets it go.
-      if (Math.abs(travelled) < STRIP_DRAG_THRESHOLD_PX && Math.abs(drift) < STRIP_DRAG_THRESHOLD_PX) return false
-      if (Math.abs(drift) > Math.abs(travelled)) {
-        stripDrag = undefined
-        return false
-      }
-      stripClaimed = true
-      stripMoved = true
-    }
-    stripOffset = Math.min(stripRange(), Math.max(0, stripDrag.startOffset - travelled))
-    applyStrip()
-    return true
+  const onPanClick = (): void => {
+    const header = panButton.parentElement
+    pan.advance(header?.clientWidth ?? 0)
   }
+  panButton.addEventListener('click', onPanClick)
+  let activePointerId: number | undefined
+  let activeTouchId: number | undefined
   const onStripPointerDown = (event: PointerEvent): void => {
-    // A mouse drags to select; only a finger pans the strip.
-    if (event.pointerType === 'mouse') return
-    if (!(event.target instanceof Element) || event.target.closest('header') === null) return
+    pan.resetClickSuppression()
+    if (!overlayQuery.matches || !event.isPrimary || (event.pointerType !== 'touch' && event.pointerType !== 'pen')) return
+    if (!(event.target instanceof Element) || event.target.closest('[data-dsh-mobile-header-pan]') !== null) return
+    if (event.target.closest('[data-dsh-mobile-header]') !== stripHeader) return
+    if (event.target.closest('[data-dsh-mobile-header] [class*="_titleRow"],[data-dsh-mobile-header] [class*="_headerLeading"]') === null) return
     if (stripRange() === 0) return
-    cancelStripCoast()
-    stripDrag = { startX: event.clientX, startY: event.clientY, startOffset: stripOffset }
-    stripClaimed = false
-    stripMoved = false
-    stripVelocity = 0
-    stripSampleX = event.clientX
-    stripSampleAt = event.timeStamp
+    activePointerId = event.pointerId
+    pan.start(event.clientX, event.clientY, event.timeStamp, event.pointerType)
+  }
+  const onStripTouchStart = (event: TouchEvent): void => {
+    if (activePointerId === undefined) return
+    if (event.touches.length !== 1) { pan.cancel(); activeTouchId = undefined; return }
+    activeTouchId = event.touches[0]?.identifier
   }
   const onStripPointerMove = (event: PointerEvent): void => {
-    if (!panStripTo(event.clientX, event.clientY)) return
-    const elapsed = event.timeStamp - stripSampleAt
-    if (elapsed > 0) {
-      // Smoothed so one jittery sample cannot fling the strip across the screen.
-      stripVelocity = stripVelocity * (1 - STRIP_COAST_SMOOTHING) + ((stripSampleX - event.clientX) / elapsed) * STRIP_COAST_SMOOTHING
-      stripSampleX = event.clientX
-      stripSampleAt = event.timeStamp
-    }
+    if (activePointerId !== event.pointerId || !pan.move(event.clientX, event.clientY, event.timeStamp)) return
     event.preventDefault()
   }
-  /**
-   * Pan from the touch stream as well.
-   *
-   * A finger that starts on a control — a chip trigger, an icon button — makes the browser
-   * take the gesture for itself and fire `pointercancel` after the first move, while
-   * `touchmove` keeps arriving. Without this the strip pans from the plain session title but
-   * not from any of the controls beside it.
-   */
   const onStripTouchMove = (event: TouchEvent): void => {
+    if (event.touches.length !== 1) { pan.cancel(); activeTouchId = undefined; return }
     const touch = event.touches[0]
-    if (touch === undefined) return
-    if (!panStripTo(touch.clientX, touch.clientY)) return
-    event.preventDefault()
+    if (touch === undefined || (activeTouchId !== undefined && touch.identifier !== activeTouchId)) return
+    if (pan.move(touch.clientX, touch.clientY, event.timeStamp)) event.preventDefault()
   }
-  const onStripPointerUp = (): void => {
-    if (stripDrag === undefined) return
-    stripDrag = undefined
-    if (stripMoved) coastStrip()
+  const onStripPointerUp = (event: PointerEvent): void => {
+    if (activePointerId !== event.pointerId) return
+    activePointerId = undefined
+    activeTouchId = undefined
+    pan.end()
+  }
+  const onStripPointerCancel = (event: PointerEvent): void => {
+    if (activePointerId !== event.pointerId) return
+    activePointerId = undefined
+    pan.pointerCancel()
+  }
+  const onStripTouchEnd = (event: TouchEvent): void => {
+    if (activeTouchId !== undefined && !Array.from(event.changedTouches).some(touch => touch.identifier === activeTouchId)) return
+    activeTouchId = undefined
+    activePointerId = undefined
+    pan.end()
+  }
+  const onStripTouchCancel = (): void => {
+    activeTouchId = undefined
+    activePointerId = undefined
+    pan.cancel()
+  }
+  const onStripFocus = (event: FocusEvent): void => {
+    if (!(event.target instanceof HTMLElement) || event.target === panButton) return
+    const header = event.target.closest<HTMLElement>('[data-dsh-mobile-header]')
+    if (header === null || header !== stripHeader || stripRange() === 0 || event.target.closest('[class*="_titleRow"],[class*="_headerLeading"]') === null) return
+    const focused = event.target.getBoundingClientRect()
+    const visible = header.getBoundingClientRect()
+    pan.reveal(focused.left, focused.right, visible.left + 42, visible.right - 56)
   }
   const onStripClickCapture = (event: MouseEvent): void => {
-    if (!stripMoved) return
-    // A drag that ended on a chip must not also open it.
-    stripMoved = false
+    const inHeader = event.target instanceof Element && event.target.closest('[data-dsh-mobile-header]') !== null
+    if (!pan.suppressClick(inHeader, event.detail)) return
     event.preventDefault()
     event.stopPropagation()
   }
   document.addEventListener('pointerdown', onStripPointerDown, true)
   document.addEventListener('pointermove', onStripPointerMove, { capture: true, passive: false })
   document.addEventListener('pointerup', onStripPointerUp, true)
-  document.addEventListener('pointercancel', onStripPointerUp, true)
+  document.addEventListener('pointercancel', onStripPointerCancel, true)
+  document.addEventListener('touchstart', onStripTouchStart, true)
   document.addEventListener('touchmove', onStripTouchMove, { capture: true, passive: false })
-  document.addEventListener('touchend', onStripPointerUp, true)
-  document.addEventListener('touchcancel', onStripPointerUp, true)
+  document.addEventListener('touchend', onStripTouchEnd, true)
+  document.addEventListener('touchcancel', onStripTouchCancel, true)
+  document.addEventListener('focusin', onStripFocus, true)
   document.addEventListener('click', onStripClickCapture, true)
+  document.addEventListener('click', onBranchClick, true)
   let frame: HTMLElement | undefined
   let sidebar: HTMLElement | undefined
   let sidebarRoot: HTMLElement | undefined
@@ -962,10 +1071,6 @@ export function installNativeMobileSurface(): () => void {
 
   const sync = (): void => {
     scheduled = 0
-    // Content changes under the strip — a new session, a job starting — so the offset has
-    // to be re-clamped or the chips would stay parked off-screen with nothing to pan back.
-    stripOffset = Math.min(stripOffset, stripRange())
-    applyStrip()
     const dedicatedCenter = document.querySelector<HTMLElement>('.dshm-main') ?? undefined
     const nextFrame = resolveNativeMobileFrame(document, dedicatedCenter)
     if (frame !== nextFrame) frame?.removeAttribute('data-dsh-mobile-frame')
@@ -979,6 +1084,7 @@ export function installNativeMobileSurface(): () => void {
     const handle = frame === undefined ? undefined : firstByClassSuffix(frame, '_handle')
     markNativeMobileSettings(document)
     if (center === undefined) {
+      syncPanButton(undefined)
       syncComposerEnterNewline(null)
       bindHistoryScroller(undefined)
       syncMediaBinding(null)
@@ -988,7 +1094,9 @@ export function installNativeMobileSurface(): () => void {
     }
     if (center !== undefined) {
       center.dataset.dshMobileCenter = 'true'
-      center.querySelector<HTMLElement>('header')?.setAttribute('data-dsh-mobile-header', 'true')
+      const header = center.querySelector<HTMLElement>('header') ?? undefined
+      header?.setAttribute('data-dsh-mobile-header', 'true')
+      syncPanButton(header)
       viewArea = firstByClassSuffix(center, '_viewArea')
       if (viewArea !== undefined) viewArea.dataset.dshMobileView = 'true'
       const conversation = center.querySelector<HTMLElement>('[data-conversation-scroll]')
@@ -1125,15 +1233,18 @@ export function installNativeMobileSurface(): () => void {
     document.removeEventListener('pointerdown', onStripPointerDown, true)
     document.removeEventListener('pointermove', onStripPointerMove, true)
     document.removeEventListener('pointerup', onStripPointerUp, true)
-    document.removeEventListener('pointercancel', onStripPointerUp, true)
+    document.removeEventListener('pointercancel', onStripPointerCancel, true)
+    document.removeEventListener('touchstart', onStripTouchStart, true)
     document.removeEventListener('touchmove', onStripTouchMove, true)
-    document.removeEventListener('touchend', onStripPointerUp, true)
-    document.removeEventListener('touchcancel', onStripPointerUp, true)
+    document.removeEventListener('touchend', onStripTouchEnd, true)
+    document.removeEventListener('touchcancel', onStripTouchCancel, true)
+    document.removeEventListener('focusin', onStripFocus, true)
     document.removeEventListener('click', onStripClickCapture, true)
-    cancelStripCoast()
-    stripVelocity = 0
-    stripOffset = 0
-    applyStrip()
+    pan.dispose()
+    applyStrip(0)
+    panButton.removeEventListener('click', onPanClick)
+    panButton.remove()
+    stripHeader?.removeAttribute('data-dsh-mobile-pan-available')
     cameraButton.removeEventListener('pointerdown', quietMediaPointer)
     cameraButton.removeEventListener('click', takePhoto)
     if (branchToastTimer !== 0) window.clearTimeout(branchToastTimer)
