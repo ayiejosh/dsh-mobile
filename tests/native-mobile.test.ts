@@ -1,6 +1,6 @@
 import { readFileSync } from 'node:fs'
 import { afterEach, describe, expect, it, vi } from 'vitest'
-import { applyNativeMobileLanguageMarker, bindComposerSoftEnter, createHeaderStripPanController, dispatchComposerImageDrop, drawerScrimVisible, installNativeMobileSurface, isComposerMediaOriginCurrent, isSoftKeyboardEnterLineBreak, markNativeMobileSettings, NATIVE_MOBILE_OVERLAY_QUERY, NATIVE_MOBILE_STYLES, preflightComposerImageDrop, resolveNativeMobileFrame, resolveNativeMobileLanguage, shouldAutoLoadEarlier } from '../src/native-mobile.js'
+import { applyNativeMobileLanguageMarker, bindComposerSoftEnter, createHeaderStripPanController, dispatchComposerImageDrop, drawerScrimVisible, installNativeMobileSurface, isComposerMediaOriginCurrent, isSoftKeyboardEnterLineBreak, markNativeMobileSettings, measureHeaderStripOverflow, NATIVE_MOBILE_OVERLAY_QUERY, NATIVE_MOBILE_STYLES, preflightComposerImageDrop, resolveNativeMobileFrame, resolveNativeMobileLanguage, shouldAutoLoadEarlier } from '../src/native-mobile.js'
 
 interface FakeElementOptions {
   readonly children?: readonly HTMLElement[]
@@ -420,6 +420,20 @@ function headerPanHarness(initialRange = 220) {
 }
 
 describe('header strip pan', () => {
+  it('does not let an open Jobs menu invent horizontal overflow', () => {
+    const box = (right: number) => ({ getBoundingClientRect: () => ({ right }) }) as unknown as Element
+    const row = {
+      clientWidth: 309,
+      scrollWidth: 439, // Includes the absolute menu, but is not the chrome width.
+      children: [box(190), box(353)],
+      querySelector: () => box(190),
+      getBoundingClientRect: () => ({ left: 50 }),
+    } as unknown as HTMLElement
+    expect(measureHeaderStripOverflow(row)).toBe(0)
+    const overflowing = { ...row, clientWidth: 261, children: [box(800)], querySelector: () => null } as unknown as HTMLElement
+    expect(measureHeaderStripOverflow(overflowing)).toBe(489)
+  })
+
   it('keeps taps and vertical scrolls untouched while a horizontal touch crosses the threshold', () => {
     const { pan, rendered } = headerPanHarness()
     pan.start(200, 20)
@@ -511,6 +525,8 @@ describe('header strip pan', () => {
     expect(NATIVE_MOBILE_STYLES).not.toContain('.dshm-shell header { touch-action: pan-y; }')
     expect(NATIVE_MOBILE_STYLES).toContain('.dsh-native-mobile-backdrop,.dsh-mobile-branch-toast,.dsh-mobile-media-toast,[data-dsh-mobile-header-pan] { display:none; }')
     expect(NATIVE_MOBILE_STYLES).toContain('[data-dsh-mobile-header-pan] { box-sizing:border-box; grid-column:3; grid-row:1; display:flex; align-items:center; justify-content:center; width:48px; height:48px;')
+    expect(NATIVE_MOBILE_STYLES).toContain('[data-dsh-mobile-header] [class*="_headerActions"] { flex:none; min-width:max-content; overflow:visible; }')
+    expect(NATIVE_MOBILE_STYLES).not.toContain('[data-dsh-mobile-header] [class*="_headerActions"] { max-width:42vw; }')
     const source = installNativeMobileSurface.toString()
     expect(source).toContain('document.addEventListener("touchmove", onStripTouchMove')
     expect(source).not.toContain('onStripPointerCancel')

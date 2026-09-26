@@ -61,8 +61,8 @@ export const NATIVE_MOBILE_STYLES = `
   [data-dsh-mobile-header] [class*="_titleCluster"] { min-width:0; }
   [data-dsh-mobile-header] [class*="_crumbs"] { min-width:0; overflow:hidden; }
   [data-dsh-mobile-header] [class*="_crumb"] { max-width:46vw; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
-  [data-dsh-mobile-header] [class*="_headerActions"] { min-width:0; overflow-x:auto; scrollbar-width:none; }
-  [data-dsh-mobile-header] [class*="_headerActions"]::-webkit-scrollbar { display:none; }
+  /* Nested header actions (including the Jobs menu) must paint outside the row. */
+  [data-dsh-mobile-header] [class*="_headerActions"] { flex:none; min-width:max-content; overflow:visible; }
   [data-dsh-mobile-header] [class*="_headerUtilities"] { gap:2px !important; }
   [data-dsh-mobile-header] [class*="_sessionLogButton"] { width:40px; min-width:40px; padding:0 !important; overflow:hidden; color:transparent; font-size:0 !important; }
   [data-dsh-mobile-header] [class*="_sessionLogButton"] > * { display:none !important; }
@@ -197,7 +197,6 @@ export const NATIVE_MOBILE_STYLES = `
 @keyframes dsh-mobile-panel-in { from { opacity:.72; transform:translateY(6px); } }
 @keyframes dsh-mobile-view-in { from { opacity:.58; transform:translateY(5px); } }
 @media (max-width:420px) {
-  [data-dsh-mobile-header] [class*="_headerActions"] { max-width:42vw; }
   [data-dsh-mobile-settings-options] [data-slot="settings.general.item"] [class*="_selector"] { align-self:stretch !important; width:100% !important; }
   [data-dsh-mobile-message-column] [data-context-fields] > * { grid-template-columns:1fr !important; }
 }
@@ -250,6 +249,16 @@ const AUTO_HISTORY_THRESHOLD_PX = 64
 
 /** Travel, in CSS pixels, that separates a header strip pan from a tap on a chip. */
 const STRIP_DRAG_THRESHOLD_PX = 8
+
+/** Measure flowing title controls without counting an open absolute-positioned menu. */
+export function measureHeaderStripOverflow(row: HTMLElement): number {
+  const left = row.getBoundingClientRect().left
+  const controls: Element[] = Array.from(row.children)
+  const actions = row.querySelector(':scope > [class*="_titleCluster"] [class*="_headerActions"]')
+  if (actions !== null) controls.push(actions)
+  const right = Math.max(left, ...controls.map(control => control.getBoundingClientRect().right))
+  return Math.max(0, right - left - row.clientWidth)
+}
 
 /** Touch-only pan state; browser pointer cancellation does not interrupt the touch stream. */
 export function createHeaderStripPanController(options: {
@@ -790,7 +799,7 @@ export function installNativeMobileSurface(): () => void {
   const stripRange = (): number => {
     const parts = stripParts()
     if (!overlayQuery.matches || parts === undefined) return 0
-    const overflow = parts.row.scrollWidth - parts.row.clientWidth
+    const overflow = measureHeaderStripOverflow(parts.row)
     return overflow > 1 ? overflow : 0
   }
   const updatePanButton = (offset: number): void => {
@@ -825,7 +834,7 @@ export function installNativeMobileSurface(): () => void {
     if (header === undefined) { panButton.remove(); pan.sync(); return }
     if (panButton.parentElement !== header) header.append(panButton)
     const parts = stripParts()
-    const naturalRange = parts === undefined ? 0 : parts.row.scrollWidth - parts.row.clientWidth - (panButton.hidden ? 0 : 48)
+    const naturalRange = parts === undefined ? 0 : measureHeaderStripOverflow(parts.row) - (panButton.hidden ? 0 : 48)
     const available = overlayQuery.matches && naturalRange > 1
     if (panButton.hidden === available) panButton.hidden = !available
     if (header.dataset.dshMobilePanAvailable !== String(available)) header.dataset.dshMobilePanAvailable = String(available)
