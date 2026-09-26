@@ -68,4 +68,15 @@ describe('desktop admin surface', () => {
     expect(isDesktopAdminSurface('evil.example')).toBe(false)
     expect(isDesktopAdminSurface('8.8.8.8')).toBe(false)
   })
+
+  it('treats the dsh-app desktop-shell protocol as the desktop admin surface', () => {
+    expect(isDesktopAdminSurface('app', '', undefined, 'dsh-app:')).toBe(true)
+    expect(isDesktopAdminSurface('app', '?dsh-mobile-preview', undefined, 'dsh-app:')).toBe(false)
+    expect(isDesktopAdminSurface('app', '', 'dedicated', 'dsh-app:')).toBe(false)
+  })
+
+  it('keeps non-shell hostnames protocol-gated', () => {
+    expect(isDesktopAdminSurface('evil.example', '', undefined, 'dsh-app:')).toBe(false)
+    expect(isDesktopAdminSurface('localhost', '', undefined, 'https:')).toBe(true)
+  })
 })

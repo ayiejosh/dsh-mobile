@@ -4037,7 +4037,7 @@ export function apply(ctx: ClientContext): void {
   }, 'dsh-mobile: authenticated gateway client trust')
 
   ctx.effect(() => {
-    const desktopAdmin = isDesktopAdminSurface(location.hostname, location.search, window.__DSH_MOBILE_FRONTEND__)
+    const desktopAdmin = isDesktopAdminSurface(location.hostname, location.search, window.__DSH_MOBILE_FRONTEND__, location.protocol)
     const style = element('style'); style.dataset.plugin = 'dsh-mobile'; style.textContent = desktopAdmin
       ? CONTROL_STYLES
       : NATIVE_MOBILE_STYLES

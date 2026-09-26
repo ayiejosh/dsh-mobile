@@ -236,7 +236,11 @@ export function assertLocalAdminTrust(request: IncomingMessage, requireBrowserOr
   const site = request.headers['sec-fetch-site']
   if (site !== undefined && site !== 'same-origin' && site !== 'none') throw new HttpError(403, 'forbidden')
   const origin = request.headers.origin
-  if (origin !== undefined) {
+  // DSH Desktop forwards admin requests from dsh-app://app with Origin and
+  // Sec-Fetch-* stripped; they are loopback-only, so the stripped-header shape
+  // below is trusted as shell traffic.
+  const shellOrigin = origin === 'dsh-app://app'
+  if (origin !== undefined && !shellOrigin) {
     try {
       const parsed = new URL(origin)
       if (parsed.host.toLowerCase() !== host.authority || (parsed.protocol !== 'http:' && parsed.protocol !== 'https:')) {
@@ -247,13 +251,14 @@ export function assertLocalAdminTrust(request: IncomingMessage, requireBrowserOr
       throw new HttpError(403, 'forbidden')
     }
   }
-  // Mutating admin requests are browser-only. Fetch metadata is optional on
-  // older clients, so a missing Sec-Fetch-Site must not make a missing Origin
-  // acceptable; Origin is the stable CSRF signal across supported browsers.
-  if (requireBrowserOrigin && origin === undefined) {
+  // Mutating admin requests are browser-only: Origin is the stable CSRF signal.
+  // The one accepted gap is the shell-forwarded shape above — a browser always
+  // sends Origin on mutating fetches, so an Origin-less request that still
+  // carries Fetch Metadata (any real browser) stays rejected.
+  if (requireBrowserOrigin && origin === undefined && site !== undefined) {
     throw new HttpError(403, 'forbidden')
   }
-  if (requireBrowserOrigin && site !== undefined && site !== 'same-origin') {
+  if (requireBrowserOrigin && !shellOrigin && site !== undefined && site !== 'same-origin') {
     throw new HttpError(403, 'forbidden')
   }
 }

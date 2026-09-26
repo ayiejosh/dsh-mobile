@@ -48,15 +48,17 @@ export function isLocalAdminHostname(hostname: string): boolean {
 /**
  * Whether the current browser document should mount the desktop Mobile access
  * control. Dedicated Mobile HTTPS (the phone surface) stays native even when
- * the Host is a private LAN address.
+ * the Host is a private LAN address. DSH Desktop (dsh-app://app) has neither,
+ * so its protocol gated on the fixed hostname "app" counts too.
  */
 export function isDesktopAdminSurface(
   hostname: string,
   search = '',
   frontend?: string,
+  protocol = '',
 ): boolean {
   const query = search.startsWith('?') ? search.slice(1) : search
-  return isLocalAdminHostname(hostname)
+  return ((protocol === 'dsh-app:' && hostname === 'app') || isLocalAdminHostname(hostname))
     && frontend !== 'dedicated'
     && !new URLSearchParams(query).has('dsh-mobile-preview')
 }

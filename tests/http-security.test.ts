@@ -112,7 +112,37 @@ describe('assertLocalAdminTrust', () => {
     }), true)).not.toThrow()
   })
 
-  it('rejects mutating requests with no Origin even when Fetch Metadata is absent', () => {
-    reject({ host: '192.168.50.23:8080' }, true)
+  it('accepts the desktop-shell Origin on mutating requests', () => {
+    expect(() => assertLocalAdminTrust(fakeRequest({
+      host: '127.0.0.1:8080',
+      origin: 'dsh-app://app',
+    }), true)).not.toThrow()
+    expect(() => assertLocalAdminTrust(fakeRequest({
+      host: '127.0.0.1:8080',
+      origin: 'dsh-app://app',
+      site: 'none',
+    }), true)).not.toThrow()
+  })
+
+  it('still rejects Sec-Fetch-Site: cross-site even with the desktop-shell Origin', () => {
+    reject({
+      host: '127.0.0.1:8080',
+      origin: 'dsh-app://app',
+      site: 'cross-site',
+    }, true)
+  })
+
+  it('accepts Origin-less and Fetch-Metadata-less mutating requests as desktop-shell forwards', () => {
+    // DSH Desktop forwards admin requests from the dsh-app://app shell after
+    // stripping Origin and Sec-Fetch-* headers; the loopback TCP peer check
+    // above still applies to them.
+    expect(() => assertLocalAdminTrust(fakeRequest({ host: '192.168.50.23:8080' }), true)).not.toThrow()
+  })
+
+  it('still rejects Origin-less mutating requests that carry Fetch Metadata', () => {
+    reject({
+      host: '192.168.50.23:8080',
+      site: 'same-origin',
+    }, true)
   })
 })
