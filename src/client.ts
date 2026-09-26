@@ -9,7 +9,7 @@ import { createRestrictedFrpServerTemplate } from './frp-template.js'
 import { createFrpAttachFrpcToml, createFrpAttachTemplate } from './frp-attach.js'
 import { parseFrpSettings, type FrpSettings } from './frp-config.js'
 import { installNativeMobileSurface, NATIVE_MOBILE_STYLES, resolveNativeMobileLanguage } from './native-mobile.js'
-import { isDesktopAdminSurface } from './local-admin-host.js'
+import { isDesktopAdminSurface, localAdminRequestHeaders } from './local-admin-host.js'
 import { fireDeviceRevoked, fireTaskNotifyEvent, isDeviceRevokedPayload, parseTaskNotifyPayload, taskCompletionTag } from './task-notify.js'
 
 export { DIAGNOSTIC_REASON_MESSAGES, LOCALIZED_DIAGNOSTIC_COPY, MOBILE_CONTROL_MESSAGES } from './client-messages.js'
@@ -458,7 +458,7 @@ async function requestJson(
     const response = await fetch(path, {
       ...init,
       signal: controller.signal,
-      headers: { 'content-type': 'application/json', ...init?.headers },
+      headers: localAdminRequestHeaders(init, location),
     })
     const body = await response.json() as Record<string, unknown>
     if (!response.ok) throw new Error(typeof body.error === 'string' ? body.error : `HTTP ${String(response.status)}`)

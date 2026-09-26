@@ -1,6 +1,6 @@
 import type { IncomingMessage, ServerResponse } from 'node:http'
 import { addressAllowed, isLoopbackAddress, RequestTrustPolicy } from './network.js'
-import { isLocalAdminHostname } from './local-admin-host.js'
+import { DESKTOP_ADMIN_HEADER, DESKTOP_ADMIN_MARKER, isLocalAdminHostname } from './local-admin-host.js'
 
 export const DEVICE_COOKIE = 'dsh_ma_device'
 export const SESSION_COOKIE = 'dsh_ma_session'
@@ -225,7 +225,11 @@ function localAuthority(header: string | undefined): { hostname: string; authori
 }
 
 /** Protect the inner management route from non-loopback and DNS-rebinding callers. */
-export function assertLocalAdminTrust(request: IncomingMessage, requireBrowserOrigin: boolean): void {
+export function assertLocalAdminTrust(
+  request: IncomingMessage,
+  requireBrowserOrigin: boolean,
+  authenticateDesktop: () => boolean = () => false,
+): void {
   if (request.socket.remoteAddress === undefined || !isLoopbackAddress(request.socket.remoteAddress)) {
     throw new HttpError(403, 'forbidden')
   }
@@ -236,11 +240,7 @@ export function assertLocalAdminTrust(request: IncomingMessage, requireBrowserOr
   const site = request.headers['sec-fetch-site']
   if (site !== undefined && site !== 'same-origin' && site !== 'none') throw new HttpError(403, 'forbidden')
   const origin = request.headers.origin
-  // DSH Desktop forwards admin requests from dsh-app://app with Origin and
-  // Sec-Fetch-* stripped; they are loopback-only, so the stripped-header shape
-  // below is trusted as shell traffic.
-  const shellOrigin = origin === 'dsh-app://app'
-  if (origin !== undefined && !shellOrigin) {
+  if (origin !== undefined) {
     try {
       const parsed = new URL(origin)
       if (parsed.host.toLowerCase() !== host.authority || (parsed.protocol !== 'http:' && parsed.protocol !== 'https:')) {
@@ -251,14 +251,14 @@ export function assertLocalAdminTrust(request: IncomingMessage, requireBrowserOr
       throw new HttpError(403, 'forbidden')
     }
   }
-  // Mutating admin requests are browser-only: Origin is the stable CSRF signal.
-  // The one accepted gap is the shell-forwarded shape above — a browser always
-  // sends Origin on mutating fetches, so an Origin-less request that still
-  // carries Fetch Metadata (any real browser) stays rejected.
-  if (requireBrowserOrigin && origin === undefined && site !== undefined) {
+  // Desktop strips Origin and Sec-Fetch-Site before forwarding, but preserves
+  // this plugin's non-simple request header. An unrelated browser origin cannot
+  // send that header through CORS; a local process could already forge Origin.
+  const desktopForward = site === undefined && request.headers[DESKTOP_ADMIN_HEADER] === DESKTOP_ADMIN_MARKER
+  if (requireBrowserOrigin && origin === undefined && !(desktopForward && authenticateDesktop())) {
     throw new HttpError(403, 'forbidden')
   }
-  if (requireBrowserOrigin && !shellOrigin && site !== undefined && site !== 'same-origin') {
+  if (requireBrowserOrigin && site !== undefined && site !== 'same-origin') {
     throw new HttpError(403, 'forbidden')
   }
 }
