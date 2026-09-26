@@ -402,88 +402,77 @@ describe('composer soft-keyboard Enter', () => {
     expect(source).not.toContain('lineBreakButton')
   })
 })
-function headerPanHarness(initialRange = 220, reducedMotion = false) {
+function headerPanHarness(initialRange = 220) {
   let range = initialRange
   let now = 0
   let rendered = 0
-  let nextFrame = 1
-  const frames = new Map<number, FrameRequestCallback>()
   const pan = createHeaderStripPanController({
     range: () => range,
     render: offset => { rendered = offset },
     now: () => now,
-    requestFrame: callback => { const id = nextFrame++; frames.set(id, callback); return id },
-    cancelFrame: id => { frames.delete(id) },
-    reducedMotion: () => reducedMotion,
   })
   return {
     pan,
     rendered: () => rendered,
-    frames,
     setRange: (value: number) => { range = value },
     setTime: (value: number) => { now = value },
-    step: (value: number) => {
-      now = value
-      const callbacks = [...frames.values()]
-      frames.clear()
-      for (const callback of callbacks) callback(value)
-    },
   }
 }
 
 describe('header strip pan', () => {
   it('keeps taps and vertical scrolls untouched while a horizontal touch crosses the threshold', () => {
     const { pan, rendered } = headerPanHarness()
-    pan.start(200, 20, 0, 'touch')
-    expect(pan.move(195, 20, 8)).toBe(false)
+    pan.start(200, 20)
+    expect(pan.move(195, 20)).toBe(false)
     expect(rendered()).toBe(0)
     pan.end()
     expect(pan.suppressClick(true, 1)).toBe(false)
-    pan.start(200, 20, 20, 'touch')
-    expect(pan.move(190, 40, 30)).toBe(false)
-    expect(pan.move(170, 40, 40)).toBe(false)
+    pan.start(200, 20)
+    expect(pan.move(190, 40)).toBe(false)
+    expect(pan.move(170, 40)).toBe(false)
     expect(rendered()).toBe(0)
-    pan.start(200, 20, 50, 'touch')
-    expect(pan.move(180, 22, 60)).toBe(true)
+    pan.start(200, 20)
+    expect(pan.move(180, 22)).toBe(true)
     expect(rendered()).toBe(20)
   })
 
-  it('continues from touchmove after pointercancel and never doubles a duplicated sample', () => {
+  it('keeps following the touch stream independently of pointercancel', () => {
     const { pan, rendered } = headerPanHarness()
-    pan.start(200, 20, 0, 'touch')
-    expect(pan.move(185, 20, 10)).toBe(true)
-    pan.pointerCancel()
-    expect(pan.move(120, 20, 30)).toBe(true)
-    expect(pan.move(120, 20, 30)).toBe(true)
+    pan.start(200, 20)
+    expect(pan.move(185, 20)).toBe(true)
+    expect(pan.move(120, 20)).toBe(true)
+    expect(pan.move(120, 20)).toBe(true)
     expect(rendered()).toBe(80)
     pan.end()
     expect(pan.suppressClick(true, 1)).toBe(true)
   })
 
-  it('abandons a cancelled pen drag without coasting or consuming a later tap', () => {
-    const { pan, frames } = headerPanHarness()
-    pan.start(200, 20, 0, 'pen')
-    pan.move(170, 20, 16)
-    pan.pointerCancel()
-    expect(pan.move(120, 20, 32)).toBe(false)
-    expect(frames.size).toBe(0)
+  it('ends touchcancel cleanly and permits the next touch to move the strip', () => {
+    const { pan, rendered } = headerPanHarness()
+    pan.start(200, 20)
+    pan.move(170, 20)
+    pan.cancel()
+    expect(pan.move(120, 20)).toBe(false)
+    pan.start(200, 20)
+    expect(pan.move(160, 20)).toBe(true)
+    expect(rendered()).toBe(70)
   })
 
   it('does not consume a later unrelated tap, a keyboard click, or a click outside the header', () => {
     const { pan, setTime } = headerPanHarness()
-    pan.start(200, 20, 0, 'touch')
-    pan.move(150, 20, 16)
+    pan.start(200, 20)
+    pan.move(150, 20)
     pan.end()
     expect(pan.suppressClick(true, 0)).toBe(false)
     expect(pan.suppressClick(false, 1)).toBe(false)
     expect(pan.suppressClick(true, 1)).toBe(false)
-    pan.start(200, 20, 40, 'touch')
-    pan.move(150, 20, 56)
+    pan.start(200, 20)
+    pan.move(150, 20)
     pan.end()
     pan.resetClickSuppression()
     expect(pan.suppressClick(true, 1)).toBe(false)
-    pan.start(200, 20, 80, 'touch')
-    pan.move(150, 20, 96)
+    pan.start(200, 20)
+    pan.move(150, 20)
     pan.end()
     setTime(401)
     expect(pan.suppressClick(true, 1)).toBe(false)
@@ -506,22 +495,15 @@ describe('header strip pan', () => {
     expect(rendered()).toBe(0)
   })
 
-  it('coasts in flick direction but respects reduced motion and disposal', () => {
-    const fast = headerPanHarness()
-    fast.pan.start(200, 20, 0, 'touch')
-    fast.pan.move(150, 20, 16)
-    fast.pan.end()
-    expect(fast.frames.size).toBe(1)
-    fast.step(32)
-    expect(fast.rendered()).toBeGreaterThan(50)
-    fast.pan.dispose()
-    expect(fast.frames.size).toBe(0)
-    expect(fast.rendered()).toBe(0)
-    const reduced = headerPanHarness(220, true)
-    reduced.pan.start(200, 20, 0, 'touch')
-    reduced.pan.move(150, 20, 16)
-    reduced.pan.end()
-    expect(reduced.frames.size).toBe(0)
+  it('stops immediately without inertia and resets on disposal', () => {
+    const { pan, rendered, setTime } = headerPanHarness()
+    pan.start(200, 20)
+    pan.move(150, 20)
+    pan.end()
+    setTime(1_000)
+    expect(rendered()).toBe(50)
+    pan.dispose()
+    expect(rendered()).toBe(0)
   })
 
   it('keeps touch-action scoped to the actual phone header and exposes a 48px control', () => {
@@ -531,9 +513,9 @@ describe('header strip pan', () => {
     expect(NATIVE_MOBILE_STYLES).toContain('[data-dsh-mobile-header-pan] { box-sizing:border-box; grid-column:3; grid-row:1; display:flex; align-items:center; justify-content:center; width:48px; height:48px;')
     const source = installNativeMobileSurface.toString()
     expect(source).toContain('document.addEventListener("touchmove", onStripTouchMove')
-    expect(source).toContain('document.addEventListener("pointercancel", onStripPointerCancel, true)')
+    expect(source).not.toContain('onStripPointerCancel')
+    expect(source).not.toContain('onStripPointerMove')
     expect(source).toContain('document.addEventListener("focusin", onStripFocus, true)')
-    expect(source).toContain('event.pointerType !== "touch" && event.pointerType !== "pen"')
     expect(source).toContain('overlayQuery.matches && naturalRange > 1')
     expect(source.indexOf('document.addEventListener("click", onStripClickCapture, true)')).toBeLessThan(source.indexOf('document.addEventListener("click", onBranchClick, true)'))
   })

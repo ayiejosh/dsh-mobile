@@ -251,43 +251,14 @@ const AUTO_HISTORY_THRESHOLD_PX = 64
 /** Travel, in CSS pixels, that separates a header strip pan from a tap on a chip. */
 const STRIP_DRAG_THRESHOLD_PX = 8
 
-/** Flick speed, in CSS pixels per millisecond, below which the strip just stops. */
-const STRIP_COAST_MIN_VELOCITY_PX_PER_MS = 0.05
-
-/** Share of a new sample folded into the flick speed, so one jittery sample cannot fling it. */
-const STRIP_COAST_SMOOTHING = 0.35
-
-/** Per-16ms share of the flick speed kept while the strip coasts to a stop. */
-const STRIP_COAST_FRICTION = 0.92
-
-/** Pan state shared by pointer and touch streams so pointercancel does not end an active touch. */
+/** Touch-only pan state; browser pointer cancellation does not interrupt the touch stream. */
 export function createHeaderStripPanController(options: {
   readonly range: () => number
   readonly render: (offset: number) => void
   readonly now: () => number
-  readonly requestFrame: (callback: FrameRequestCallback) => number
-  readonly cancelFrame: (id: number) => void
-  readonly reducedMotion: () => boolean
-}): {
-  readonly offset: () => number
-  readonly start: (x: number, y: number, at: number, source: 'touch' | 'pen') => void
-  readonly move: (x: number, y: number, at: number) => boolean
-  readonly pointerCancel: () => void
-  readonly end: () => void
-  readonly cancel: () => void
-  readonly sync: () => void
-  readonly advance: (width: number) => void
-  readonly reveal: (left: number, right: number, visibleLeft: number, visibleRight: number) => void
-  readonly resetClickSuppression: () => void
-  readonly suppressClick: (inHeader: boolean, detail: number) => boolean
-  readonly dispose: () => void
-} {
+}) {
   let offset = 0
-  let drag: {
-    readonly x: number; readonly y: number; readonly offset: number; readonly source: 'touch' | 'pen'
-    lastX: number; lastAt: number; velocity: number; claimed: boolean
-  } | undefined
-  let frame = 0
+  let drag: { readonly x: number; readonly y: number; readonly offset: number; claimed: boolean } | undefined
   let suppressUntil = 0
   const clamp = (value: number): number => Math.min(Math.max(0, options.range()), Math.max(0, value))
   const setOffset = (value: number): void => {
@@ -296,33 +267,10 @@ export function createHeaderStripPanController(options: {
     offset = next
     options.render(offset)
   }
-  const stopCoast = (): void => {
-    if (frame !== 0) options.cancelFrame(frame)
-    frame = 0
-  }
-  const coast = (velocity: number): void => {
-    if (options.reducedMotion() || Math.abs(velocity) < STRIP_COAST_MIN_VELOCITY_PX_PER_MS) return
-    let previous = options.now()
-    const step = (now: number): void => {
-      const elapsed = Math.max(1, Math.min(64, now - previous))
-      previous = now
-      velocity *= STRIP_COAST_FRICTION ** (elapsed / 16)
-      if (Math.abs(velocity) < STRIP_COAST_MIN_VELOCITY_PX_PER_MS) { frame = 0; return }
-      const before = offset
-      setOffset(offset + velocity * elapsed)
-      if (offset === before || offset === 0 || offset === options.range()) { frame = 0; return }
-      frame = options.requestFrame(step)
-    }
-    frame = options.requestFrame(step)
-  }
   const end = (): void => {
     if (drag === undefined) return
-    const completed = drag
+    if (drag.claimed) suppressUntil = options.now() + 400
     drag = undefined
-    if (completed.claimed) {
-      suppressUntil = options.now() + 400
-      coast(completed.velocity)
-    }
   }
   const cancel = (): void => {
     if (drag?.claimed) suppressUntil = options.now() + 400
@@ -330,12 +278,11 @@ export function createHeaderStripPanController(options: {
   }
   return {
     offset: () => offset,
-    start: (x, y, at, source) => {
-      stopCoast()
-      drag = { x, y, offset, source, lastX: x, lastAt: at, velocity: 0, claimed: false }
+    start: (x: number, y: number) => {
+      drag = { x, y, offset, claimed: false }
       suppressUntil = 0
     },
-    move: (x, y, at) => {
+    move: (x: number, y: number) => {
       if (drag === undefined) return false
       const travel = x - drag.x
       if (!drag.claimed) {
@@ -345,39 +292,30 @@ export function createHeaderStripPanController(options: {
         drag.claimed = true
       }
       setOffset(drag.offset - travel)
-      if (at > drag.lastAt && x !== drag.lastX) {
-        drag.velocity = drag.velocity * (1 - STRIP_COAST_SMOOTHING)
-          + ((drag.lastX - x) / (at - drag.lastAt)) * STRIP_COAST_SMOOTHING
-        drag.lastX = x
-        drag.lastAt = at
-      }
       return true
     },
-    pointerCancel: () => { if (drag?.source === 'pen') cancel() },
     end,
     cancel,
     sync: () => {
-      if (options.range() === 0) { stopCoast(); drag = undefined; suppressUntil = 0 }
+      if (options.range() === 0) { drag = undefined; suppressUntil = 0 }
       setOffset(offset)
     },
-    advance: width => {
-      stopCoast()
+    advance: (width: number) => {
       const range = options.range()
       setOffset(offset >= range - 1 ? 0 : offset + Math.max(80, width * 0.7))
     },
-    reveal: (left, right, visibleLeft, visibleRight) => {
-      stopCoast()
+    reveal: (left: number, right: number, visibleLeft: number, visibleRight: number) => {
       if (left < visibleLeft) setOffset(offset - (visibleLeft - left))
       else if (right > visibleRight) setOffset(offset + right - visibleRight)
     },
     resetClickSuppression: () => { suppressUntil = 0 },
-    suppressClick: (inHeader, detail) => {
+    suppressClick: (inHeader: boolean, detail: number) => {
       if (suppressUntil === 0 || detail === 0) return false
       const suppress = inHeader && options.now() <= suppressUntil
       suppressUntil = 0
       return suppress
     },
-    dispose: () => { stopCoast(); drag = undefined; suppressUntil = 0; setOffset(0) },
+    dispose: () => { drag = undefined; suppressUntil = 0; setOffset(0) },
   }
 }
 
@@ -877,9 +815,6 @@ export function installNativeMobileSurface(): () => void {
     range: stripRange,
     render: applyStrip,
     now: () => performance.now(),
-    requestFrame: callback => window.requestAnimationFrame(callback),
-    cancelFrame: id => window.cancelAnimationFrame(id),
-    reducedMotion: () => window.matchMedia('(prefers-reduced-motion: reduce)').matches,
   })
   const syncPanButton = (header: HTMLElement | undefined): void => {
     if (header !== stripHeader) {
@@ -902,53 +837,37 @@ export function installNativeMobileSurface(): () => void {
     pan.advance(header?.clientWidth ?? 0)
   }
   panButton.addEventListener('click', onPanClick)
-  let activePointerId: number | undefined
   let activeTouchId: number | undefined
-  const onStripPointerDown = (event: PointerEvent): void => {
+  const onStripTouchStart = (event: TouchEvent): void => {
+    if (activeTouchId !== undefined) pan.cancel()
+    activeTouchId = undefined
     pan.resetClickSuppression()
-    if (!overlayQuery.matches || !event.isPrimary || (event.pointerType !== 'touch' && event.pointerType !== 'pen')) return
+    if (event.touches.length !== 1) return
+    if (!overlayQuery.matches) return
     if (!(event.target instanceof Element) || event.target.closest('[data-dsh-mobile-header-pan]') !== null) return
     if (event.target.closest('[data-dsh-mobile-header]') !== stripHeader) return
     if (event.target.closest('[data-dsh-mobile-header] [class*="_titleRow"],[data-dsh-mobile-header] [class*="_headerLeading"]') === null) return
     if (stripRange() === 0) return
-    activePointerId = event.pointerId
-    pan.start(event.clientX, event.clientY, event.timeStamp, event.pointerType)
-  }
-  const onStripTouchStart = (event: TouchEvent): void => {
-    if (activePointerId === undefined) return
-    if (event.touches.length !== 1) { pan.cancel(); activeTouchId = undefined; return }
-    activeTouchId = event.touches[0]?.identifier
-  }
-  const onStripPointerMove = (event: PointerEvent): void => {
-    if (activePointerId !== event.pointerId || !pan.move(event.clientX, event.clientY, event.timeStamp)) return
-    event.preventDefault()
+    const touch = event.touches[0]
+    if (touch === undefined) return
+    activeTouchId = touch.identifier
+    pan.start(touch.clientX, touch.clientY)
   }
   const onStripTouchMove = (event: TouchEvent): void => {
-    if (event.touches.length !== 1) { pan.cancel(); activeTouchId = undefined; return }
+    if (activeTouchId === undefined) return
+    if (event.touches.length !== 1) { activeTouchId = undefined; pan.cancel(); return }
     const touch = event.touches[0]
-    if (touch === undefined || (activeTouchId !== undefined && touch.identifier !== activeTouchId)) return
-    if (pan.move(touch.clientX, touch.clientY, event.timeStamp)) event.preventDefault()
-  }
-  const onStripPointerUp = (event: PointerEvent): void => {
-    if (activePointerId !== event.pointerId) return
-    activePointerId = undefined
-    activeTouchId = undefined
-    pan.end()
-  }
-  const onStripPointerCancel = (event: PointerEvent): void => {
-    if (activePointerId !== event.pointerId) return
-    activePointerId = undefined
-    pan.pointerCancel()
+    if (touch === undefined || touch.identifier !== activeTouchId) return
+    if (pan.move(touch.clientX, touch.clientY)) event.preventDefault()
   }
   const onStripTouchEnd = (event: TouchEvent): void => {
-    if (activeTouchId !== undefined && !Array.from(event.changedTouches).some(touch => touch.identifier === activeTouchId)) return
+    if (activeTouchId === undefined || !Array.from(event.changedTouches).some(touch => touch.identifier === activeTouchId)) return
     activeTouchId = undefined
-    activePointerId = undefined
     pan.end()
   }
-  const onStripTouchCancel = (): void => {
+  const onStripTouchCancel = (event: TouchEvent): void => {
+    if (activeTouchId === undefined || !Array.from(event.changedTouches).some(touch => touch.identifier === activeTouchId)) return
     activeTouchId = undefined
-    activePointerId = undefined
     pan.cancel()
   }
   const onStripFocus = (event: FocusEvent): void => {
@@ -965,10 +884,6 @@ export function installNativeMobileSurface(): () => void {
     event.preventDefault()
     event.stopPropagation()
   }
-  document.addEventListener('pointerdown', onStripPointerDown, true)
-  document.addEventListener('pointermove', onStripPointerMove, { capture: true, passive: false })
-  document.addEventListener('pointerup', onStripPointerUp, true)
-  document.addEventListener('pointercancel', onStripPointerCancel, true)
   document.addEventListener('touchstart', onStripTouchStart, true)
   document.addEventListener('touchmove', onStripTouchMove, { capture: true, passive: false })
   document.addEventListener('touchend', onStripTouchEnd, true)
@@ -1230,10 +1145,6 @@ export function installNativeMobileSurface(): () => void {
     observer.disconnect()
     overlayQuery.removeEventListener('change', schedule)
     document.removeEventListener('click', onBranchClick, true)
-    document.removeEventListener('pointerdown', onStripPointerDown, true)
-    document.removeEventListener('pointermove', onStripPointerMove, true)
-    document.removeEventListener('pointerup', onStripPointerUp, true)
-    document.removeEventListener('pointercancel', onStripPointerCancel, true)
     document.removeEventListener('touchstart', onStripTouchStart, true)
     document.removeEventListener('touchmove', onStripTouchMove, true)
     document.removeEventListener('touchend', onStripTouchEnd, true)
